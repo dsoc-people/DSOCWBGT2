@@ -8,7 +8,6 @@ from streamlit_folium import st_folium
 import streamlit as st
 from branca.element import MacroElement
 from jinja2 import Template
-import branca.colormap as cm
 
 # --- Streamlit Page Setup ---
 st.set_page_config(page_title="Kentucky WBGT Map", layout="wide")
@@ -22,7 +21,7 @@ Data are pulled live from the Mesonet API (`d266k7wxhw6o23.cloudfront.net`).
 # --- Config ---
 BASE = "https://d266k7wxhw6o23.cloudfront.net/"
 YEAR = "2025"
-GOOGLE_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # <-- replace with your real Google Maps key
+GOOGLE_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # Replace with your Google Maps key
 
 # --- Helper Functions ---
 def farenheit_to_celsius(temp_f):
@@ -192,28 +191,6 @@ for _, row in wbgt_df.iterrows():
             ),
         ).add_to(m)
 
-# --- Horizontal Color Legend ---
-legend_html = """
-<div style="
-    position: fixed; 
-    bottom: 20px; left: 50%; transform: translateX(-50%);
-    width: 420px; height: 50px; 
-    background: linear-gradient(to right, #8BC34A 25%, #FFEB3B 25%, #FFEB3B 50%, #F44336 50%, #F44336 75%, #212121 75%);
-    border: 2px solid grey; border-radius: 8px;
-    z-index:9999; font-size:14px; color:white; text-align:center;">
-    <div style="padding-top:8px;">
-        <b>WBGT (°F)</b> — 
-        <span style="color:#8BC34A;">80–85 Low</span> |
-        <span style="color:#FFEB3B;">85–88 Moderate</span> |
-        <span style="color:#F44336;">88–90 High</span> |
-        <span style="color:#FFFFFF;">>90 Extreme</span>
-    </div>
-</div>
-"""
-macro = MacroElement()
-macro._template = Template(legend_html)
-m.get_root().add_child(macro)
-
 # --- Observation Time (Top Left) ---
 obs_html = f"""
 <div style="
@@ -232,16 +209,22 @@ obs_macro = MacroElement()
 obs_macro._template = Template(obs_html)
 m.get_root().add_child(obs_macro)
 
-# --- Add Folium Colorbar for Context ---
-colormap = cm.LinearColormap(
-    colors=["#8BC34A", "#FFEB3B", "#F44336", "#212121"],
-    vmin=80, vmax=92,
-    caption="Wet Bulb Globe Temperature (°F)"
-)
-colormap.add_to(m)
+# --- Discrete Color Bar at Bottom ---
+colorbar_html = """
+<div style="
+    position: fixed;
+    bottom: 15px; left: 50%; transform: translateX(-50%);
+    width: 450px; height: 40px;
+    display: flex; align-items: center; justify-content: space-between;
+    text-align: center; font-size: 13px; font-weight: bold; z-index: 9999;
+    border-radius: 6px; overflow: hidden;">
 
-folium.LayerControl().add_to(m)
-st_folium(m, width=1000, height=650)
-
-
-st.caption("WBGT is a simplified estimate based on air temperature, dew point, wind speed, solar radiation, and pressure.")
+    <div style="flex:1; background-color:#8BC34A; color:black; padding:8px; border-right:1px solid black;">80–85°F<br>Low</div>
+    <div style="flex:1; background-color:#FFEB3B; color:black; padding:8px; border-right:1px solid black;">85–88°F<br>Moderate</div>
+    <div style="flex:1; background-color:#F44336; color:white; padding:8px; border-right:1px solid black;">88–90°F<br>High</div>
+    <div style="flex:1; background-color:#212121; color:white; padding:8px;">>90°F<br>Extreme</div>
+</div>
+"""
+color_macro = MacroElement()
+color_macro._template = Template(colorbar_html)
+m
