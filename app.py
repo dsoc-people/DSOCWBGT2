@@ -21,7 +21,7 @@ Data are pulled live from the Mesonet API (`d266k7wxhw6o23.cloudfront.net`).
 # --- Config ---
 BASE = "https://d266k7wxhw6o23.cloudfront.net/"
 YEAR = "2025"
-GOOGLE_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # Replace with your Google Maps key
+GOOGLE_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # Replace with your key
 
 # --- Helper Functions ---
 def farenheit_to_celsius(temp_f):
@@ -216,15 +216,18 @@ colorbar_html = """
     bottom: 15px; left: 50%; transform: translateX(-50%);
     width: 450px; height: 40px;
     display: flex; align-items: center; justify-content: space-between;
-    text-align: center; font-size: 13px; font-weight: bold; z-index: 9999;
-    border-radius: 6px; overflow: hidden;">
+    text-align: center; font-size: 13px; font-weight: bold; z-index: 9999;">
 
-    <div style="flex:1; background-color:#8BC34A; color:black; padding:8px; border-right:1px solid black;">80–85°F<br>Low</div>
-    <div style="flex:1; background-color:#FFEB3B; color:black; padding:8px; border-right:1px solid black;">85–88°F<br>Moderate</div>
-    <div style="flex:1; background-color:#F44336; color:white; padding:8px; border-right:1px solid black;">88–90°F<br>High</div>
+    <div style="flex:1; background-color:#8BC34A; color:black; padding:8px;">80–85°F<br>Low</div>
+    <div style="flex:1; background-color:#FFEB3B; color:black; padding:8px;">85–88°F<br>Moderate</div>
+    <div style="flex:1; background-color:#F44336; color:white; padding:8px;">88–90°F<br>High</div>
     <div style="flex:1; background-color:#212121; color:white; padding:8px;">>90°F<br>Extreme</div>
 </div>
 """
 color_macro = MacroElement()
 color_macro._template = Template(colorbar_html)
-m
+m.get_root().add_child(color_macro)
+
+folium.LayerControl().add_to(m)
+st_folium(m, width=1000, height=650)
+
