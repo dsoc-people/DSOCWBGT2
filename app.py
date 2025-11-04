@@ -8,6 +8,7 @@ from streamlit_folium import st_folium
 import streamlit as st
 from branca.element import MacroElement
 from jinja2 import Template
+import branca.colormap as cm
 
 # --- Streamlit Page Setup ---
 st.set_page_config(page_title="Kentucky WBGT Map", layout="wide")
@@ -21,7 +22,7 @@ Data are pulled live from the Mesonet API (`d266k7wxhw6o23.cloudfront.net`).
 # --- Config ---
 BASE = "https://d266k7wxhw6o23.cloudfront.net/"
 YEAR = "2025"
-GOOGLE_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # <-- replace with your real key
+GOOGLE_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # <-- replace with your real Google Maps key
 
 # --- Helper Functions ---
 def farenheit_to_celsius(temp_f):
@@ -128,6 +129,10 @@ if wbgt_df.empty:
     st.error("No valid WBGT data could be retrieved.")
     st.stop()
 
+# --- Determine Last Observation Time ---
+latest_time = pd.to_datetime(wbgt_df["Time"]).max()
+latest_time_str = latest_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+
 # --- Map Rendering ---
 avg_lat = wbgt_df["Latitude"].mean()
 avg_lon = wbgt_df["Longitude"].mean()
@@ -142,27 +147,20 @@ folium.TileLayer(
     control=True
 ).add_to(m)
 
-# County + State Boundaries (US Census)
+# County and State Outlines
 folium.GeoJson(
     "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json",
     name="U.S. Counties",
-    style_function=lambda x: {
-        "color": "#ffffff",
-        "weight": 0.5,
-        "fillOpacity": 0
-    }
+    style_function=lambda x: {"color": "#ffffff", "weight": 0.5, "fillOpacity": 0}
 ).add_to(m)
 
 folium.GeoJson(
     "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json",
     name="U.S. States",
-    style_function=lambda x: {
-        "color": "#ffff00",
-        "weight": 1.0,
-        "fillOpacity": 0
-    }
+    style_function=lambda x: {"color": "#ffff00", "weight": 1.0, "fillOpacity": 0}
 ).add_to(m)
 
+# --- Color Function ---
 def wbgt_color(val):
     if pd.isna(val):
         return "gray"
@@ -175,6 +173,7 @@ def wbgt_color(val):
     else:
         return "#212121"  # Extreme
 
+# --- Add Station Markers ---
 for _, row in wbgt_df.iterrows():
     if pd.notna(row["Latitude"]) and pd.notna(row["Longitude"]):
         color = wbgt_color(row["WBGT (°F)"])
@@ -193,17 +192,16 @@ for _, row in wbgt_df.iterrows():
             ),
         ).add_to(m)
 
-# --- Add Horizontal Color Bar ---
+# --- Horizontal Color Legend ---
 legend_html = """
 <div style="
     position: fixed; 
-    bottom: 25px; left: 50%; transform: translateX(-50%);
-    width: 400px; height: 45px; 
+    bottom: 20px; left: 50%; transform: translateX(-50%);
+    width: 420px; height: 50px; 
     background: linear-gradient(to right, #8BC34A 25%, #FFEB3B 25%, #FFEB3B 50%, #F44336 50%, #F44336 75%, #212121 75%);
-    border: 2px solid grey;
-    border-radius: 6px;
+    border: 2px solid grey; border-radius: 8px;
     z-index:9999; font-size:14px; color:white; text-align:center;">
-    <div style="padding-top:6px;">
+    <div style="padding-top:8px;">
         <b>WBGT (°F)</b> — 
         <span style="color:#8BC34A;">80–85 Low</span> |
         <span style="color:#FFEB3B;">85–88 Moderate</span> |
@@ -216,6 +214,34 @@ macro = MacroElement()
 macro._template = Template(legend_html)
 m.get_root().add_child(macro)
 
+# --- Observation Time (Top Left) ---
+obs_html = f"""
+<div style="
+    position: fixed;
+    top: 20px; left: 20px;
+    background-color: rgba(0,0,0,0.6);
+    padding: 8px 12px;
+    border-radius: 6px;
+    color: white;
+    font-size: 14px;
+    z-index: 9999;">
+    <b>Last Observation:</b><br>{latest_time_str}
+</div>
+"""
+obs_macro = MacroElement()
+obs_macro._template = Template(obs_html)
+m.get_root().add_child(obs_macro)
+
+# --- Add Folium Colorbar for Context ---
+colormap = cm.LinearColormap(
+    colors=["#8BC34A", "#FFEB3B", "#F44336", "#212121"],
+    vmin=80, vmax=92,
+    caption="Wet Bulb Globe Temperature (°F)"
+)
+colormap.add_to(m)
+
 folium.LayerControl().add_to(m)
 st_folium(m, width=1000, height=650)
 
+
+st.caption("WBGT is a simplified estimate based on air temperature, dew point, wind speed, solar radiation, and pressure.")
