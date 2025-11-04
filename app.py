@@ -219,13 +219,3 @@ m.get_root().add_child(macro)
 folium.LayerControl().add_to(m)
 st_folium(m, width=1000, height=650)
 
-# --- Table Below Map ---
-st.markdown("### Station WBGT Table")
-st.dataframe(
-    wbgt_df.sort_values("WBGT (°F)", ascending=False)
-            .style.format({"WBGT (°F)": "{:.1f}"}),
-    use_container_width=True,
-    hide_index=True,
-)
-
-st.caption("WBGT is a simplified estimate based on air temperature, dew point, wind speed, solar radiation, and pressure.")
