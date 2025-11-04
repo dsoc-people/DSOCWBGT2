@@ -7,34 +7,43 @@ import folium
 from streamlit_folium import st_folium
 import streamlit as st
 
-# --- Configuration ---
-st.set_page_config(page_title="Kentucky WBGT Monitor", layout="wide")
-year = "2025"
+# --- Streamlit Page Setup ---
+st.set_page_config(page_title="Kentucky WBGT Map", layout="wide")
 
-# --- Unit Conversions ---
+st.title("🌡️ Kentucky Mesonet — Wet Bulb Globe Temperature (WBGT)")
+st.markdown("""
+Displays the **current estimated WBGT (°F)** across all available Kentucky Mesonet stations.  
+Data are pulled live from the Mesonet API (`d266k7wxhw6o23.cloudfront.net`).
+""")
+
+# --- Config ---
+BASE = "https://d266k7wxhw6o23.cloudfront.net/"
+YEAR = "2025"
+
+# --- Helper Functions ---
 def farenheit_to_celsius(temp_f):
     return (temp_f - 32) * 5 / 9
 
 def celsius_to_farenheit(temp_c):
     return temp_c * 9 / 5 + 32
 
-# --- Approximate Wet Bulb Calculation (placeholder) ---
 def dbdp2wb(tempC, dpC, p):
-    # Replace with psychrometric calc later if needed
+    """Simplified wet-bulb approximation."""
     return (tempC + dpC) / 2
 
-# --- WBGT Function ---
 def wbgt(tempF, mph, rad, bar, dpF):
     tempC = farenheit_to_celsius(tempF)
     mps = mph * 0.44704
     tempK = tempC + 273.15
 
+    # Globe temperature approximation
     if rad is None or np.isnan(rad):
         tempG = np.nan
     else:
         tempG = tempK + (rad - 30) / (0.0252 * rad + 10.5 * mps + 22.5 + 1e-9)
-        tempG = tempG - 273.15
+        tempG -= 273.15
 
+    # Convert pressure to kPa
     p = bar * 3.38639
     dpC = farenheit_to_celsius(dpF)
 
@@ -50,32 +59,36 @@ def wbgt(tempF, mph, rad, bar, dpF):
 
     return celsius_to_farenheit(wbgt_c)
 
-# --- Station Coordinates ---
+# --- Load Station Metadata ---
 @st.cache_data
-def load_station_coords():
-    url = "https://d266k7wxhw6o23.cloudfront.net/metadata/stations_468eb55962c18d1fc333160925381b9d6fb5eb86cd6fbbfbfc285b1d6fcfe7a0.json"
-    data = requests.get(url).json()
+def load_station_metadata():
+    url = f"{BASE}metadata/manifest.json"
+    manifest = requests.get(url).json()
+    stations_key = manifest["stations"]["key"]
+    stations_url = f"{BASE}{stations_key}"
+    data = requests.get(stations_url).json()
     df = pd.DataFrame(data)
-    coords = {row["abbrev"]: (row["lat"], row["lon"]) for _, row in df.iterrows()}
-    return df, coords
+    df.rename(columns={"abbrev": "Station", "lat": "Latitude", "lon": "Longitude"}, inplace=True)
+    return df
 
-stations_df, station_coords = load_station_coords()
-station_abbrevs = stations_df["abbrev"].tolist()
+stations_df = load_station_metadata()
+station_coords = {row["Station"]: (row["Latitude"], row["Longitude"]) for _, row in stations_df.iterrows()}
 
-# --- Fetch + Process WBGT Data ---
+# --- Process Single Station ---
 @st.cache_data(ttl=900)
-def process_station_data(station_id):
+def process_station(station_id):
     try:
-        manifest_url = f"https://d266k7wxhw6o23.cloudfront.net/data/{station_id}/{year}/manifest.json"
+        manifest_url = f"{BASE}data/{station_id}/{YEAR}/manifest.json"
         manifest = requests.get(manifest_url).json()
         latest_day = max(manifest.keys())
-        data_key = manifest[latest_day]["key"]
-        data_url = f"https://d266k7wxhw6o23.cloudfront.net/{data_key}"
+        key = manifest[latest_day]["key"]
+        data_url = f"{BASE}{key}"
         data = requests.get(data_url).json()
-        df = pd.DataFrame(data['rows'], columns=data['columns'])
+        df = pd.DataFrame(data["rows"], columns=data["columns"])
 
-        cols = ["TAIR", "DWPT", "WSPD", "SRAD", "PRES", "UTCTimestampCollected"]
-        if not all(c in df.columns for c in cols):
+        # Validate required columns
+        req_cols = ["TAIR", "DWPT", "WSPD", "SRAD", "PRES", "UTCTimestampCollected"]
+        if not all(col in df.columns for col in req_cols):
             return None
 
         tair_c = df["TAIR"].dropna().iloc[-1]
@@ -100,48 +113,44 @@ def process_station_data(station_id):
             "Longitude": lon,
             "Time": obs_time
         }
-    except Exception as e:
+    except Exception:
         return None
 
-# --- UI Layout ---
-st.title("🌡️ Kentucky Mesonet WBGT Map")
-st.markdown("Displays current **Wet Bulb Globe Temperature (°F)** across Mesonet stations.")
+# --- Compute All WBGTs ---
+with st.spinner("Loading latest Mesonet station data…"):
+    results = [process_station(station) for station in stations_df["Station"].tolist()]
+    results = [r for r in results if r is not None]
+    wbgt_df = pd.DataFrame(results)
 
-selected_stations = st.multiselect(
-    "Select stations to process",
-    station_abbrevs,
-    default=["FARM", "RSVL", "MRRY"]
+if wbgt_df.empty:
+    st.error("No valid WBGT data could be retrieved.")
+    st.stop()
+
+# --- Map Rendering ---
+avg_lat = wbgt_df["Latitude"].mean()
+avg_lon = wbgt_df["Longitude"].mean()
+m = folium.Map(location=[avg_lat, avg_lon], zoom_start=7, tiles="CartoDB positron")
+
+for _, row in wbgt_df.iterrows():
+    if pd.notna(row["Latitude"]) and pd.notna(row["Longitude"]):
+        folium.CircleMarker(
+            location=[row["Latitude"], row["Longitude"]],
+            radius=7,
+            color="red",
+            fill=True,
+            fill_opacity=0.7,
+            popup=f"<b>{row['Station']}</b><br>WBGT: {row['WBGT (°F)']:.1f} °F<br>{row['Time']}",
+        ).add_to(m)
+
+st_folium(m, width=1000, height=650)
+
+# --- Table Below Map ---
+st.markdown("### Station WBGT Table")
+st.dataframe(
+    wbgt_df.sort_values("WBGT (°F)", ascending=False)
+            .style.format({"WBGT (°F)": "{:.1f}"}),
+    use_container_width=True,
+    hide_index=True,
 )
 
-if st.button("Fetch WBGT Data"):
-    with st.spinner("Processing station data..."):
-        results = [process_station_data(s) for s in selected_stations]
-        results = [r for r in results if r]
-        if not results:
-            st.error("No valid data found.")
-        else:
-            wbgt_df = pd.DataFrame(results)
-
-            st.dataframe(
-                wbgt_df.style.format({"WBGT (°F)": "{:.1f}"}),
-                use_container_width=True
-            )
-
-            # --- Folium Map ---
-            avg_lat, avg_lon = wbgt_df["Latitude"].mean(), wbgt_df["Longitude"].mean()
-            fmap = folium.Map(location=[avg_lat, avg_lon], zoom_start=7)
-
-            for _, row in wbgt_df.iterrows():
-                folium.CircleMarker(
-                    location=[row["Latitude"], row["Longitude"]],
-                    radius=7,
-                    color="red",
-                    fill=True,
-                    fill_opacity=0.7,
-                    popup=f"<b>{row['Station']}</b><br>WBGT: {row['WBGT (°F)']:.1f} °F<br>{row['Time']}"
-                ).add_to(fmap)
-
-            st_data = st_folium(fmap, width=900, height=600)
-
-else:
-    st.info("Select stations and click **Fetch WBGT Data** to begin.")
+st.caption("WBGT is a simplified estimate based on air temperature, dew point, wind speed, solar radiation, and pressure.")
