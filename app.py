@@ -21,6 +21,7 @@ Data are pulled live from the Mesonet API (`d266k7wxhw6o23.cloudfront.net`).
 # --- Config ---
 BASE = "https://d266k7wxhw6o23.cloudfront.net/"
 YEAR = "2025"
+GOOGLE_API_KEY = "YOUR_GOOGLE_MAPS_API_KEY"  # <-- replace with your real key
 
 # --- Helper Functions ---
 def farenheit_to_celsius(temp_f):
@@ -130,7 +131,37 @@ if wbgt_df.empty:
 # --- Map Rendering ---
 avg_lat = wbgt_df["Latitude"].mean()
 avg_lon = wbgt_df["Longitude"].mean()
-m = folium.Map(location=[avg_lat, avg_lon], zoom_start=7, tiles="Esri.WorldImagery")
+m = folium.Map(location=[avg_lat, avg_lon], zoom_start=7, tiles=None)
+
+# Google Maps Satellite + Labels
+folium.TileLayer(
+    tiles=f"https://mt1.google.com/vt/lyrs=y&x={{x}}&y={{y}}&z={{z}}&key={GOOGLE_API_KEY}",
+    attr="Google Maps",
+    name="Google Satellite",
+    overlay=False,
+    control=True
+).add_to(m)
+
+# County + State Boundaries (US Census)
+folium.GeoJson(
+    "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json",
+    name="U.S. Counties",
+    style_function=lambda x: {
+        "color": "#ffffff",
+        "weight": 0.5,
+        "fillOpacity": 0
+    }
+).add_to(m)
+
+folium.GeoJson(
+    "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json",
+    name="U.S. States",
+    style_function=lambda x: {
+        "color": "#ffff00",
+        "weight": 1.0,
+        "fillOpacity": 0
+    }
+).add_to(m)
 
 def wbgt_color(val):
     if pd.isna(val):
@@ -185,6 +216,7 @@ macro = MacroElement()
 macro._template = Template(legend_html)
 m.get_root().add_child(macro)
 
+folium.LayerControl().add_to(m)
 st_folium(m, width=1000, height=650)
 
 # --- Table Below Map ---
