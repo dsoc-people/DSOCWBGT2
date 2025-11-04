@@ -6,6 +6,8 @@ import numpy as np
 import folium
 from streamlit_folium import st_folium
 import streamlit as st
+from branca.element import MacroElement
+from jinja2 import Template
 
 # --- Streamlit Page Setup ---
 st.set_page_config(page_title="Kentucky WBGT Map", layout="wide")
@@ -86,7 +88,6 @@ def process_station(station_id):
         data = requests.get(data_url).json()
         df = pd.DataFrame(data["rows"], columns=data["columns"])
 
-        # Validate required columns
         req_cols = ["TAIR", "DWPT", "WSPD", "SRAD", "PRES", "UTCTimestampCollected"]
         if not all(col in df.columns for col in req_cols):
             return None
@@ -129,18 +130,60 @@ if wbgt_df.empty:
 # --- Map Rendering ---
 avg_lat = wbgt_df["Latitude"].mean()
 avg_lon = wbgt_df["Longitude"].mean()
-m = folium.Map(location=[avg_lat, avg_lon], zoom_start=7, tiles="CartoDB positron")
+m = folium.Map(location=[avg_lat, avg_lon], zoom_start=7, tiles="Esri.WorldImagery")
+
+def wbgt_color(val):
+    if pd.isna(val):
+        return "gray"
+    elif val < 85:
+        return "#8BC34A"  # Low
+    elif val < 88:
+        return "#FFEB3B"  # Moderate
+    elif val < 90:
+        return "#F44336"  # High
+    else:
+        return "#212121"  # Extreme
 
 for _, row in wbgt_df.iterrows():
     if pd.notna(row["Latitude"]) and pd.notna(row["Longitude"]):
+        color = wbgt_color(row["WBGT (°F)"])
         folium.CircleMarker(
             location=[row["Latitude"], row["Longitude"]],
             radius=7,
-            color="red",
+            color=color,
             fill=True,
-            fill_opacity=0.7,
-            popup=f"<b>{row['Station']}</b><br>WBGT: {row['WBGT (°F)']:.1f} °F<br>{row['Time']}",
+            fill_color=color,
+            fill_opacity=0.9,
+            popup=folium.Popup(
+                f"<b>{row['Station']}</b><br>"
+                f"WBGT: {row['WBGT (°F)']:.1f} °F<br>"
+                f"Observed: {row['Time']}",
+                max_width=250
+            ),
         ).add_to(m)
+
+# --- Add Horizontal Color Bar ---
+legend_html = """
+<div style="
+    position: fixed; 
+    bottom: 25px; left: 50%; transform: translateX(-50%);
+    width: 400px; height: 45px; 
+    background: linear-gradient(to right, #8BC34A 25%, #FFEB3B 25%, #FFEB3B 50%, #F44336 50%, #F44336 75%, #212121 75%);
+    border: 2px solid grey;
+    border-radius: 6px;
+    z-index:9999; font-size:14px; color:white; text-align:center;">
+    <div style="padding-top:6px;">
+        <b>WBGT (°F)</b> — 
+        <span style="color:#8BC34A;">80–85 Low</span> |
+        <span style="color:#FFEB3B;">85–88 Moderate</span> |
+        <span style="color:#F44336;">88–90 High</span> |
+        <span style="color:#FFFFFF;">>90 Extreme</span>
+    </div>
+</div>
+"""
+macro = MacroElement()
+macro._template = Template(legend_html)
+m.get_root().add_child(macro)
 
 st_folium(m, width=1000, height=650)
 
