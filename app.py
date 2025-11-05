@@ -13,8 +13,7 @@ from jinja2 import Template
 st.set_page_config(page_title="Kentucky WBGT Map", layout="wide")
 
 st.title("Disaster Science Operations Center")
-st.markdown("""
-current Conditions
+st.markdown("""Current Conditions
 """)
 
 # --- Config ---
