@@ -12,10 +12,9 @@ from jinja2 import Template
 # --- Streamlit Page Setup ---
 st.set_page_config(page_title="Kentucky WBGT Map", layout="wide")
 
-st.title("🌡️ Kentucky Mesonet — Wet Bulb Globe Temperature (WBGT)")
+st.title("Disaster Science Operations Center")
 st.markdown("""
-Displays the **current estimated WBGT (°F)** across all available Kentucky Mesonet stations.  
-Data are pulled live from the Mesonet API (`d266k7wxhw6o23.cloudfront.net`).
+current Conditions
 """)
 
 # --- Config ---
