@@ -13,7 +13,6 @@ from streamlit_autorefresh import st_autorefresh
 # ---------------- Streamlit Setup ----------------
 st.set_page_config(page_title="Kentucky WBGT Monitor", layout="wide")
 st.title("TESTY")
-st.caption("Live Wet Bulb Globe Temperature (°F) across Kentucky Mesonet and White Squirrel Weather (WeatherSTEM) stations. Auto-updates every 5 minutes.")
 
 # 🔁 Auto-refresh every 5 minutes (300,000 ms)
 st_autorefresh(interval=5 * 60 * 1000, key="wbgt_autorefresh")
