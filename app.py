@@ -140,14 +140,14 @@ def wbgt_color(w):
     """Apply WBGT color scale."""
     if w is None or pd.isna(w):
         return "#808080"  # gray for missing data
-    if 40 <= w <= 64:
+    if 40 <= w <= 65:
         return "#008000"  # green
-    elif 65 <= w <= 72:
-        return "#FEF200"  # Yellow
-    elif 73 <= w <= 81:
+    elif 66 <= w <= 73:
+        return "#FEF200"  # yellow
+    elif 74 <= w <= 82:
         return "#FF0000"  # red
     else:
-        return "#000000"  # black for ≥82
+        return "#000000"  # black for ≥83
 
 center_lat = combined["latitude"].dropna().mean()
 center_lon = combined["longitude"].dropna().mean()
@@ -158,12 +158,16 @@ ws_layer = folium.FeatureGroup(name="White Squirrel Weather")
 
 for _, row in combined.iterrows():
     lat, lon = row.get("latitude"), row.get("longitude")
-    if pd.isna(lat) or pd.isna(lon): continue
+    if pd.isna(lat) or pd.isna(lon): 
+        continue
     wbgt_val = row.get("wbgt_f")
     popup = f"<b>{row['name']} ({row['source']})</b><br>WBGT: {wbgt_val if pd.notna(wbgt_val) else 'N/A'} °F<br>Obs: {row.get('observation_time','N/A')}"
     folium.CircleMarker(
-        location=[lat, lon], radius=7, color=wbgt_color(wbgt_val),
-        fill=True, fill_opacity=0.8,
+        location=[lat, lon],
+        radius=7,
+        color=wbgt_color(wbgt_val),
+        fill=True,
+        fill_opacity=0.8,
         popup=folium.Popup(popup, max_width=250),
         tooltip=f"{row['name']}: WBGT {wbgt_val:.1f}°F" if pd.notna(wbgt_val) else f"{row['name']}: N/A"
     ).add_to(mesonet_layer if row["source"] == "Mesonet" else ws_layer)
@@ -175,12 +179,12 @@ folium.LayerControl(collapsed=False).add_to(m)
 # ---------------- Legend ----------------
 legend_html = """
 <div style='position: fixed; bottom: 30px; left: 30px; z-index:9999;
- background: white; padding: 10px; border-radius:8px; font-size:12px'>
+ background: rgba(255,255,255,0.9); padding: 10px; border-radius:8px; font-size:12px; border: 1px solid #ccc'>
  <b>WBGT (°F)</b><br>
- <div><span style='background:#008000;width:12px;height:12px;display:inline-block;'></span> 40–64 (Safe)</div>
- <div><span style='background:#808080;width:12px;height:12px;display:inline-block;'></span> 65–72 (Caution)</div>
- <div><span style='background:#FF0000;width:12px;height:12px;display:inline-block;'></span> 73–81 (Danger)</div>
- <div><span style='background:#000000;width:12px;height:12px;display:inline-block;border:1px solid #999;'></span> ≥82 (Extreme)</div>
+ <div><span style='background:#008000;width:12px;height:12px;display:inline-block;'></span> 40–65 (Safe)</div>
+ <div><span style='background:#FEF200;width:12px;height:12px;display:inline-block;'></span> 66–73 (Caution)</div>
+ <div><span style='background:#FF0000;width:12px;height:12px;display:inline-block;'></span> 74–82 (Danger)</div>
+ <div><span style='background:#000000;border:1px solid #999;width:12px;height:12px;display:inline-block;'></span> ≥83 (Extreme)</div>
  <div><span style='background:#808080;width:12px;height:12px;display:inline-block;'></span> N/A (No Data)</div>
 </div>
 """
