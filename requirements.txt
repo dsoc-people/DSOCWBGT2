@@ -4,3 +4,4 @@ pandas
 numpy
 folium
 streamlit-folium
+streamlit-autorefresh==1.0.1
