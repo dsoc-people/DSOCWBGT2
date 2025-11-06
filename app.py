@@ -143,7 +143,7 @@ def wbgt_color(w):
     if 40 <= w <= 64:
         return "#008000"  # green
     elif 65 <= w <= 72:
-        return "#808080"  # gray
+        return "#FEF200"  # Yellow
     elif 73 <= w <= 81:
         return "#FF0000"  # red
     else:
