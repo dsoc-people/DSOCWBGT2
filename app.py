@@ -8,18 +8,15 @@ import numpy as np
 import folium
 from streamlit_folium import st_folium
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 # ---------------- Streamlit Setup ----------------
 st.set_page_config(page_title="Kentucky WBGT Monitor", layout="wide")
 st.title("🌡️ Kentucky Mesonet & WeatherSTEM — WBGT Monitor")
 st.caption("Live Wet Bulb Globe Temperature (°F) across Kentucky Mesonet and White Squirrel Weather (WeatherSTEM) stations. Auto-updates every 5 minutes.")
 
-# Auto-refresh every 5 min (300 000 ms)
-st_autorefresh = st.experimental_rerun if hasattr(st, "experimental_rerun") else None
-st_autorefresh = st.experimental_rerun  # placeholder to avoid linter
-st_autorefresh = st.autorefresh if hasattr(st, "autorefresh") else None
-if st_autorefresh:
-    st_autorefresh(interval=5 * 60 * 1000, key="auto_refresh")
+# 🔁 Auto-refresh every 5 minutes (300,000 ms)
+st_autorefresh(interval=5 * 60 * 1000, key="wbgt_autorefresh")
 
 year = "2025"
 
