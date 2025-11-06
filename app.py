@@ -137,11 +137,17 @@ combined.update(ws_df)
 
 # ---------------- Map Rendering ----------------
 def wbgt_color(w):
-    if w is None or pd.isna(w): return "#808080"
-    elif w < 60: return "#2ca02c"
-    elif w < 70: return "#ff7f0e"
-    elif w < 80: return "#d62728"
-    else: return "#800026"
+    """Apply WBGT color scale."""
+    if w is None or pd.isna(w):
+        return "#808080"  # gray for missing data
+    if 40 <= w <= 64:
+        return "#008000"  # green
+    elif 65 <= w <= 72:
+        return "#808080"  # gray
+    elif 73 <= w <= 81:
+        return "#FF0000"  # red
+    else:
+        return "#000000"  # black for ≥82
 
 center_lat = combined["latitude"].dropna().mean()
 center_lon = combined["longitude"].dropna().mean()
@@ -166,17 +172,17 @@ mesonet_layer.add_to(m)
 ws_layer.add_to(m)
 folium.LayerControl(collapsed=False).add_to(m)
 
+# ---------------- Legend ----------------
 legend_html = """
 <div style='position: fixed; bottom: 30px; left: 30px; z-index:9999;
  background: white; padding: 10px; border-radius:8px; font-size:12px'>
  <b>WBGT (°F)</b><br>
- <div><span style='background:#2ca02c;width:12px;height:12px;display:inline-block;'></span> <60</div>
- <div><span style='background:#ff7f0e;width:12px;height:12px;display:inline-block;'></span> 60–69.9</div>
- <div><span style='background:#d62728;width:12px;height:12px;display:inline-block;'></span> 70–79.9</div>
- <div><span style='background:#800026;width:12px;height:12px;display:inline-block;'></span> ≥80</div>
- <div><span style='background:#808080;width:12px;height:12px;display:inline-block;'></span> N/A</div>
+ <div><span style='background:#008000;width:12px;height:12px;display:inline-block;'></span> 40–64 (Safe)</div>
+ <div><span style='background:#808080;width:12px;height:12px;display:inline-block;'></span> 65–72 (Caution)</div>
+ <div><span style='background:#FF0000;width:12px;height:12px;display:inline-block;'></span> 73–81 (Danger)</div>
+ <div><span style='background:#000000;width:12px;height:12px;display:inline-block;border:1px solid #999;'></span> ≥82 (Extreme)</div>
+ <div><span style='background:#808080;width:12px;height:12px;display:inline-block;'></span> N/A (No Data)</div>
 </div>
 """
 m.get_root().html.add_child(folium.Element(legend_html))
 st_folium(m, width=1000, height=650)
-
