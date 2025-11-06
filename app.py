@@ -180,11 +180,3 @@ legend_html = """
 m.get_root().html.add_child(folium.Element(legend_html))
 st_folium(m, width=1000, height=650)
 
-# ---------------- Table ----------------
-st.markdown("### WBGT Table (All Stations)")
-st.dataframe(
-    combined[["name", "source", "wbgt_f", "observation_time"]]
-        .sort_values("wbgt_f", ascending=False)
-        .reset_index(drop=True)
-        .style.format({"wbgt_f": "{:.1f}"})
-)
