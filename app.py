@@ -11,6 +11,7 @@ import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 import geopandas as gpd
 import branca.colormap as cm
+from io import BytesIO
 
 # ---------------- Streamlit Setup ----------------
 st.set_page_config(page_title="Kentucky WBGT Monitor", layout="wide")
@@ -30,9 +31,34 @@ selected_var = st.sidebar.selectbox(
     ["WBGT (°F)", "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)"]
 )
 
-# County selector
-counties_url = "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/geojson-counties-kentucky.json"
-counties_gdf = gpd.read_file(counties_url)
+# ---------------- Safe County Loader ----------------
+@st.cache_data
+def load_ky_counties():
+    """
+    Load Kentucky county boundaries from a stable GeoJSON source.
+    Falls back to a local inline GeoJSON snippet if online fetch fails.
+    """
+    try:
+        url = "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/geojson-counties-kentucky.geojson"
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        return gpd.read_file(BytesIO(resp.content))
+    except Exception as e:
+        st.warning(f"⚠️ Could not load Kentucky counties online ({e}). Using minimal fallback dataset.")
+        fallback = {
+            "type": "FeatureCollection",
+            "features": [
+                {"type": "Feature", "properties": {"NAME": "Warren"},
+                 "geometry": {"type": "Polygon", "coordinates": [[[-86.6, 36.8], [-86.2, 36.8], [-86.2, 37.1], [-86.6, 37.1], [-86.6, 36.8]]]}},
+                {"type": "Feature", "properties": {"NAME": "Hardin"},
+                 "geometry": {"type": "Polygon", "coordinates": [[[-86.2, 37.5], [-85.7, 37.5], [-85.7, 37.9], [-86.2, 37.9], [-86.2, 37.5]]]}},
+                {"type": "Feature", "properties": {"NAME": "Daviess"},
+                 "geometry": {"type": "Polygon", "coordinates": [[[-87.4, 37.6], [-86.9, 37.6], [-86.9, 37.9], [-87.4, 37.9], [-87.4, 37.6]]]}}
+            ]
+        }
+        return gpd.GeoDataFrame.from_features(fallback["features"])
+
+counties_gdf = load_ky_counties()
 county_list = sorted(counties_gdf["NAME"].unique())
 selected_county = st.sidebar.selectbox("Select a Kentucky County:", county_list)
 
