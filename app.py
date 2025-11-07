@@ -1,6 +1,6 @@
 # app.py
 # -*- coding: utf-8 -*-
-# Streamlit App — Combined Mesonet + WeatherSTEM WBGT Map (auto-refresh every 5 min)
+# Streamlit App — Combined Mesonet + WeatherSTEM WBGT Map (with variable & county selector)
 
 import requests
 import pandas as pd
@@ -9,15 +9,32 @@ import folium
 from streamlit_folium import st_folium
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+import geopandas as gpd
+import branca.colormap as cm
 
 # ---------------- Streamlit Setup ----------------
 st.set_page_config(page_title="Kentucky WBGT Monitor", layout="wide")
-st.title("TESTY")
+st.title("🌡️ Kentucky WBGT / Weather Map Dashboard")
 
 # 🔁 Auto-refresh every 5 minutes (300,000 ms)
 st_autorefresh(interval=5 * 60 * 1000, key="wbgt_autorefresh")
 
 year = "2025"
+
+# ---------------- Sidebar Controls ----------------
+st.sidebar.header("Map Controls")
+
+# Variable selector
+selected_var = st.sidebar.selectbox(
+    "Variable to Display:",
+    ["WBGT (°F)", "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)"]
+)
+
+# County selector
+counties_url = "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/geojson-counties-kentucky.json"
+counties_gdf = gpd.read_file(counties_url)
+county_list = sorted(counties_gdf["NAME"].unique())
+selected_county = st.sidebar.selectbox("Select a Kentucky County:", county_list)
 
 # ---------------- WeatherSTEM URLs ----------------
 urls = {
@@ -67,7 +84,7 @@ def fetch_weatherstem():
             data.append({
                 "name": site,
                 "observation_time": t,
-                "wbgt_f": wbgt_val,
+                "WBGT (°F)": wbgt_val,
                 "Temperature (°F)": temp,
                 "Dewpoint (°F)": dew,
                 "Wind Speed (mph)": wind,
@@ -75,7 +92,7 @@ def fetch_weatherstem():
             })
         except Exception:
             data.append({
-                "name": site, "observation_time": "Error", "wbgt_f": None,
+                "name": site, "observation_time": "Error", "WBGT (°F)": None,
                 "Temperature (°F)": None, "Dewpoint (°F)": None, "Wind Speed (mph)": None,
                 "source": "White Squirrel Weather"
             })
@@ -98,8 +115,14 @@ def process_station_data(station_id, coords):
         obs_time = df["UTCTimestampCollected"].dropna().iloc[-1]
         wbgt_f = wbgt(celsius_to_farenheit(tair_c), wspd_mps * 2.23694, srad, pres_inhg, celsius_to_farenheit(dwpt_c))
         lat, lon = coords.get(station_id, (None, None))
-        return {"name": station_id, "latitude": lat, "longitude": lon, "wbgt_f": wbgt_f,
-                "observation_time": obs_time, "source": "Mesonet"}
+        return {
+            "name": station_id, "latitude": lat, "longitude": lon,
+            "WBGT (°F)": wbgt_f,
+            "Temperature (°F)": celsius_to_farenheit(tair_c),
+            "Dewpoint (°F)": celsius_to_farenheit(dwpt_c),
+            "Wind Speed (mph)": wspd_mps * 2.23694,
+            "observation_time": obs_time, "source": "Mesonet"
+        }
     except Exception:
         return None
 
@@ -120,7 +143,7 @@ with st.spinner("Fetching latest WBGT data..."):
                                            for s in stations_df["abbrev"].tolist()) if r])
     combined = pd.concat([mesonet_df, ws_df], ignore_index=True)
 
-# ---------------- Add Known Coordinates for WeatherSTEM ----------------
+# Add known coordinates for WeatherSTEM
 known_coords = {
     "WKU": (36.9855, -86.4551),
     "WKU Chaos": (36.9855, -86.4551),
@@ -134,19 +157,26 @@ for i, row in ws_df.iterrows():
     ws_df.loc[i, "latitude"], ws_df.loc[i, "longitude"] = lat, lon
 combined.update(ws_df)
 
-# ---------------- Map Rendering ----------------
-def wbgt_color(w):
-    """Apply WBGT color scale."""
-    if w is None or pd.isna(w):
-        return "#808080"  # gray for missing data
-    if 40 <= w <= 65:
-        return "#008000"  # green
-    elif 66 <= w <= 73:
-        return "#FEF200"  # yellow
-    elif 74 <= w <= 82:
-        return "#FF0000"  # red
+# ---------------- Color Function ----------------
+def variable_color(val, var):
+    if pd.isna(val): return "#808080"
+    if var in ["Temperature (°F)", "Dewpoint (°F)"]:
+        cmap = cm.LinearColormap(["#0000FF", "#00FF00", "#FF0000"], vmin=30, vmax=100)
+        return cmap(val)
+    elif var == "WBGT (°F)":
+        if val < 66: return "#008000"
+        elif val < 74: return "#FEF200"
+        elif val < 83: return "#FF0000"
+        else: return "#000000"
+    elif var == "Wind Speed (mph)":
+        cmap = cm.LinearColormap(["#FFFFFF", "#00FFFF", "#0000FF"], vmin=0, vmax=20)
+        return cmap(val)
     else:
-        return "#000000"  # black for ≥83
+        return "#808080"
+
+# ---------------- Main Map Rendering ----------------
+st.markdown("### 🗺️ Statewide Observation Map")
+map_container = st.empty()
 
 center_lat = combined["latitude"].dropna().mean()
 center_lon = combined["longitude"].dropna().mean()
@@ -157,35 +187,65 @@ ws_layer = folium.FeatureGroup(name="White Squirrel Weather")
 
 for _, row in combined.iterrows():
     lat, lon = row.get("latitude"), row.get("longitude")
-    if pd.isna(lat) or pd.isna(lon): 
+    if pd.isna(lat) or pd.isna(lon):
         continue
-    wbgt_val = row.get("wbgt_f")
-    popup = f"<b>{row['name']} ({row['source']})</b><br>WBGT: {wbgt_val if pd.notna(wbgt_val) else 'N/A'} °F<br>Obs: {row.get('observation_time','N/A')}"
+    val = row.get(selected_var)
+    popup = f"<b>{row['name']} ({row['source']})</b><br>{selected_var}: {val if pd.notna(val) else 'N/A'}<br>Obs: {row.get('observation_time','N/A')}"
     folium.CircleMarker(
         location=[lat, lon],
         radius=7,
-        color=wbgt_color(wbgt_val),
+        color=variable_color(val, selected_var),
         fill=True,
         fill_opacity=0.8,
         popup=folium.Popup(popup, max_width=250),
-        tooltip=f"{row['name']}: WBGT {wbgt_val:.1f}°F" if pd.notna(wbgt_val) else f"{row['name']}: N/A"
+        tooltip=f"{row['name']}: {selected_var} {val:.1f}" if pd.notna(val) else f"{row['name']}: N/A"
     ).add_to(mesonet_layer if row["source"] == "Mesonet" else ws_layer)
 
 mesonet_layer.add_to(m)
 ws_layer.add_to(m)
 folium.LayerControl(collapsed=False).add_to(m)
 
-# ---------------- Legend ----------------
-legend_html = """
-<div style='position: fixed; bottom: 30px; left: 30px; z-index:9999;
- background: rgba(255,255,255,0.9); padding: 10px; border-radius:8px; font-size:12px; border: 1px solid #ccc'>
- <b>WBGT (°F)</b><br>
- <div><span style='background:#008000;width:12px;height:12px;display:inline-block;'></span> 40–65 (Safe)</div>
- <div><span style='background:#FEF200;width:12px;height:12px;display:inline-block;'></span> 66–73 (Caution)</div>
- <div><span style='background:#FF0000;width:12px;height:12px;display:inline-block;'></span> 74–82 (Danger)</div>
- <div><span style='background:#000000;border:1px solid #999;width:12px;height:12px;display:inline-block;'></span> ≥83 (Extreme)</div>
- <div><span style='background:#808080;width:12px;height:12px;display:inline-block;'></span> N/A (No Data)</div>
-</div>
-"""
-m.get_root().html.add_child(folium.Element(legend_html))
-st_folium(m, width=1000, height=650)
+# Dynamic Legend
+if selected_var in ["Temperature (°F)", "Dewpoint (°F)"]:
+    legend = cm.LinearColormap(["#0000FF", "#00FF00", "#FF0000"], vmin=30, vmax=100, caption=f"{selected_var}")
+    legend.add_to(m)
+elif selected_var == "Wind Speed (mph)":
+    legend = cm.LinearColormap(["#FFFFFF", "#00FFFF", "#0000FF"], vmin=0, vmax=20, caption="Wind Speed (mph)")
+    legend.add_to(m)
+else:
+    legend_html = """
+    <div style='position: fixed; bottom: 30px; left: 30px; z-index:9999;
+     background: rgba(255,255,255,0.9); padding: 10px; border-radius:8px; font-size:12px; border: 1px solid #ccc'>
+     <b>WBGT (°F)</b><br>
+     <div><span style='background:#008000;width:12px;height:12px;display:inline-block;'></span> 40–65 (Safe)</div>
+     <div><span style='background:#FEF200;width:12px;height:12px;display:inline-block;'></span> 66–73 (Caution)</div>
+     <div><span style='background:#FF0000;width:12px;height:12px;display:inline-block;'></span> 74–82 (Danger)</div>
+     <div><span style='background:#000000;border:1px solid #999;width:12px;height:12px;display:inline-block;'></span> ≥83 (Extreme)</div>
+     <div><span style='background:#808080;width:12px;height:12px;display:inline-block;'></span> N/A</div>
+    </div>
+    """
+    m.get_root().html.add_child(folium.Element(legend_html))
+
+with map_container:
+    st_folium(m, width=1000, height=650)
+
+# ---------------- County Focus Map ----------------
+st.markdown("### 🧭 County Focus View")
+
+county_geom = counties_gdf[counties_gdf["NAME"] == selected_county]
+county_bounds = county_geom.total_bounds
+county_map = folium.Map(
+    location=[(county_bounds[1] + county_bounds[3]) / 2, (county_bounds[0] + county_bounds[2]) / 2],
+    zoom_start=9, control_scale=True
+)
+folium.GeoJson(
+    county_geom.to_json(),
+    name="Selected County",
+    style_function=lambda x: {
+        "fillColor": "#ff7800",
+        "color": "black",
+        "weight": 2,
+        "fillOpacity": 0.25,
+    }
+).add_to(county_map)
+st_folium(county_map, width=800, height=400)
