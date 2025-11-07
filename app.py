@@ -35,16 +35,20 @@ selected_var = st.sidebar.selectbox(
 @st.cache_data
 def load_ky_counties():
     """
-    Load Kentucky county boundaries from a stable GeoJSON source.
-    Falls back to a local inline GeoJSON snippet if online fetch fails.
+    Load Kentucky county boundaries from Plotly's stable GeoJSON repository.
+    Falls back to a minimal inline GeoJSON if loading fails.
     """
     try:
-        url = "https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/geojson-counties-kentucky.geojson"
+        url = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json"
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
-        return gpd.read_file(BytesIO(resp.content))
+        gdf = gpd.read_file(BytesIO(resp.content))
+        # Kentucky FIPS code = 21
+        gdf = gdf[gdf["STATE"] == "21"]
+        gdf["NAME"] = gdf["NAME"].str.title()
+        return gdf
     except Exception as e:
-        st.warning(f"⚠️ Could not load Kentucky counties online ({e}). Using minimal fallback dataset.")
+        st.warning(f"⚠️ Could not load full Kentucky counties dataset ({e}). Using minimal fallback.")
         fallback = {
             "type": "FeatureCollection",
             "features": [
