@@ -1,9 +1,12 @@
 streamlit
+streamlit-folium
 requests
 pandas
 numpy
 folium
-streamlit-folium
+geopandas
+shapely
+branca
 streamlit-autorefresh==1.0.1
 geopy
 geopandas
