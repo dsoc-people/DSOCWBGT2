@@ -110,7 +110,21 @@ Glasgow,36.9774781561,-85.916651431
 WKUIMFields,36.9774781561,-85.9166514315
 Owensboro,36.9774781561,-85.9166514315
 WKU,36.9774781561,-85.9166514315
+Makers Mark Warehouse,37.6333457845,-85.4075842212
+Makers Mark St Mary,37.5707524233,-85.3743790708
+Makers Mark Lebanon,37.5758692691,-85.2736659636
+Maker's Mark Innovation Garden,37.64686,-85.34895
+JimBeam Booker Noe,37.8127589004,-85.6849316392
+Jim Beam Bardstown,37.8344634433,-85.4711423977
+Jim Beam Clermont,37.9317945798,-85.6520369416
+Jim Beam Old Crow,38.1463823354,-84.8415031586
+Jim Beam Grand Dad,38.215725282,-84.8093261477
+Woodford County Courthouse,38.052717,-84.73067
+Adair County High School,37.107667,-85.32824
+Clinton County High School,36.708211,-85.131276
+Novelis Guthrie,36.6025431022,-87.7186136559
 """
+
 
 # ---------------- Streamlit Setup ----------------
 st.set_page_config(page_title="Kentucky WBGT Monitor", layout="wide")
@@ -218,8 +232,22 @@ urls = {
     "WKU IM Fields": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wkuimfields/latest.json",
     "E'town": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/hardin/wswelizabethtown/latest.json",
     "Owensboro": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/daviess/wswowensboro/latest.json",
-    "Glasgow": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/barren/wswglasgow/latest.json"
+    "Glasgow": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/barren/wswglasgow/latest.json",
+    "Maker's Mark Warehouse": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmarkwarehouse/latest.json",
+    "Maker's Mark St Mary": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmarkstmary/latest.json",
+    "Maker's Mark Lebanon": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmarklebanon/latest.json",
+    "Maker's Mark Innovation Garden": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmark/latest.json",
+    "Jim Beam Booker Noe": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/nelson/jbbookernoe/latest.json",
+    "Jim Beam Bardstown": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/nelson/jbbardstown/latest.json",
+    "Jim Beam Clermont": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/bullitt/jbclermont/latest.json",
+    "Jim Beam Old Crow": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/franklin-ky/jboldcrow/latest.json",
+    "Jim Beam Grand Dad": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/franklin-ky/jbgranddad/latest.json",
+    "Woodford County Courthouse": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/woodford/courthouse/latest.json",
+    "Adair County High School": "https://cdn/weatherstem.com/dashboard/data/dynamic/model/adair/achs/latest.json",
+    "Clinton County High School": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/clinton/clintonhs/latest.json",
+    "Novelis Guthrie": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/todd/novelis/latest.json"
 }
+
 
 # ---------------- Helper Functions ----------------
 def extract_value(records, target):
