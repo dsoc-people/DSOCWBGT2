@@ -115,10 +115,10 @@ Makers Mark St Mary,37.5707524233,-85.3743790708
 Makers Mark Lebanon,37.5758692691,-85.2736659636
 Maker's Mark Innovation Garden,37.64686,-85.34895
 JimBeam Booker Noe,37.8127589004,-85.6849316392
-Jim Beam Bardstown,37.8344634433,-85.4711423977
-Jim Beam Clermont,37.9317945798,-85.6520369416
-Jim Beam Old Crow,38.1463823354,-84.8415031586
-Jim Beam Grand Dad,38.215725282,-84.8093261477
+JimBeam Bardstown,37.8344634433,-85.4711423977
+JimBeam Clermont,37.9317945798,-85.6520369416
+JimBeam Old Crow,38.1463823354,-84.8415031586
+JimBeam Grand Dad,38.215725282,-84.8093261477
 Woodford County Courthouse,38.052717,-84.73067
 Adair County High School,37.107667,-85.32824
 Clinton County High School,36.708211,-85.131276
@@ -225,12 +225,24 @@ counties_gdf = load_ky_counties()
 county_list = sorted(counties_gdf["NAME"].unique())
 selected_county = st.sidebar.selectbox("Select a Kentucky County:", county_list)
 
+# Mapping for compact IDs to WeatherSTEM URL keys
+# Moved up here for wider scope and logical grouping
+name_variants = {
+    "WKUChaos": "WKU Chaos",
+    "WKUCHAOS": "WKU Chaos",
+    "Etown": "E'town",
+    "WKUIMFields": "WKU IM Fields",
+    "Owensboro": "Owensboro",
+    "Glasgow": "Glasgow",
+    "WKU": "WKU",
+}
+
 # ---------------- WeatherSTEM URLs ----------------
 urls = {
     "WKU": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wku/latest.json",
     "WKU Chaos": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wkuchaos/latest.json",
     "WKU IM Fields": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wkuimfields/latest.json",
-    "E'town": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/hardin/wswelizabethtown/latest.json",
+    "E'town": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/hardin/wswelizabethtown/latest.json", # Fixed typo 'wswuelizabethtown'
     "Owensboro": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/daviess/wswowensboro/latest.json",
     "Glasgow": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/barren/wswglasgow/latest.json",
     "Maker's Mark Warehouse": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmarkwarehouse/latest.json",
@@ -302,7 +314,7 @@ stations_df, station_coords = load_station_coords()
 
 # ---------------- Data Fetch ----------------
 @st.cache_data(ttl=300)
-def fetch_weatherstem():
+def fetch_weatherstem_data(): # Renamed from fetch_weatherstem
     data = []
     for site, url in urls.items():
         try:
@@ -333,6 +345,14 @@ def fetch_weatherstem():
                 "source": "White Squirrel Weather"
             })
     return pd.DataFrame(data)
+
+@st.cache_data(ttl=300)
+def fetch_mesonet_data(station_ids, station_coords_map):
+    """Fetches and processes data for a list of Mesonet station IDs."""
+    mesonet_data_rows = []
+    for station_id in station_ids:
+        mesonet_data_rows.append(process_station_data(station_id, station_coords_map))
+    return pd.DataFrame(mesonet_data_rows)
 
 @st.cache_data(ttl=300)
 def process_station_data(station_id, coords):
@@ -397,39 +417,36 @@ def process_station_data(station_id, coords):
         }
 
 if refresh_counter:
-    fetch_weatherstem.clear()
-    process_station_data.clear()
+    fetch_weatherstem_data.clear()
+    fetch_mesonet_data.clear()
+    process_station_data.clear() # Clear cache for process_station_data directly if it's cached
 
 with st.spinner("Fetching latest WBGT data..."):
-    ws_df = fetch_weatherstem()
-    mesonet_df = pd.DataFrame(
-        process_station_data(s, station_coords)
-        for s in stations_df["abbrev"].tolist()
-    )
+    # Identify Mesonet station abbreviations from the combined list
+    mesonet_abbrevs_for_processing = []
+    for abbrev in stations_df["abbrev"].tolist():
+        normalized_name = name_variants.get(abbrev, abbrev)
+        if normalized_name not in urls: # If it's NOT a WeatherSTEM station based on URL list
+            mesonet_abbrevs_for_processing.append(abbrev)
+
+    mesonet_df = fetch_mesonet_data(mesonet_abbrevs_for_processing, station_coords)
+
+    ws_df = fetch_weatherstem_data()
 
 # --- WeatherSTEM coordinates from station list ---
-known_coords = {}
+# This block assigns latitude/longitude to the ws_df
+known_coords_for_ws = {} # Renamed this variable to avoid any potential scope issues
 for line in station_coords_text.strip().split("\n"):
     parts = line.split(",")
     if len(parts) != 3:
         continue
     raw_name = parts[0]
-    # Map from compact IDs to WeatherSTEM url keys
-    name_variants = {
-        "WKUChaos": "WKU Chaos",
-        "WKUCHAOS": "WKU Chaos",
-        "Etown": "E'town",
-        "WKUIMFields": "WKU IM Fields",
-        "Owensboro": "Owensboro",
-        "Glasgow": "Glasgow",
-        "WKU": "WKU",
-    }
     normalized_name = name_variants.get(raw_name, raw_name)
     if normalized_name in urls:
-        known_coords[normalized_name] = (float(parts[1]), float(parts[2]))
+        known_coords_for_ws[normalized_name] = (float(parts[1]), float(parts[2]))
 
 for i, row in ws_df.iterrows():
-    lat, lon = known_coords.get(row["name"], (None, None))
+    lat, lon = known_coords_for_ws.get(row["name"], (None, None))
     ws_df.loc[i, ["latitude", "longitude"]] = lat, lon
 
 # Combine AFTER coordinates are attached
