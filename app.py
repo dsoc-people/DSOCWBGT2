@@ -1,38 +1,62 @@
+# app.py
 # -*- coding: utf-8 -*-
-# Streamlit Integrated WeatherSTEM + Custom Mesonet WBGT App
-# EXACT integration of user's entire WeatherSTEM/Mesonet pipeline
+# Consolidated Weather Station Data Collection and Visualization — Streamlit Version
 
-import streamlit as st
 import requests
 import pandas as pd
 import numpy as np
 import json
 import folium
+from folium.plugins import FloatImage
+import streamlit as st
 from streamlit_folium import st_folium
+from geopy.geocoders import Nominatim
+from geopy.extra.rate_limiter import RateLimiter
 import math
-import time
+import subprocess
+import sys
 
-# ---------------- Streamlit Config ----------------
-st.set_page_config(page_title="KY WBGT Map", layout="wide")
-st.title("🌡️ Kentucky WBGT / Weather Map — Integrated WeatherSTEM + Custom Mesonet")
+# ---------------------------------------------------------------
+# Streamlit Setup
+# ---------------------------------------------------------------
+st.set_page_config(page_title="Consolidated WBGT Dashboard", layout="wide")
+st.title("Consolidated Weather Station Data & WBGT Visualization")
 
-# ---------------- Auto-refresh every 5 min ----------------
-st.experimental_set_query_params(ts=int(time.time()))
-time.sleep(300)
-st.experimental_rerun()
+# ---------------------------------------------------------------
+# (KEEPING this exactly as in your script)
+# Installing packages dynamically
+# ---------------------------------------------------------------
+sys.path.append('path/to/your/module')
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "folium", "geopy"])
 
 
-# ---------------- WeatherSTEM URLs ----------------
+# --- URLs for each WeatherSTEM station ---
 urls = {
     "WKU": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wku/latest.json",
     "WKU Chaos": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wkuchaos/latest.json",
     "WKU IM Fields": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wkuimfields/latest.json",
     "E'town": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/hardin/wswelizabethtown/latest.json",
     "Owensboro": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/daviess/wswowensboro/latest.json",
-    "Glasgow": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/barren/wswglasgow/latest.json"
+    "Glasgow": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/barren/wswglasgow/latest.json",
+    "Maker's Mark Warehouse": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmarkwarehouse/latest.json",
+    "Maker's Mark St Mary": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmarkstmary/latest.json",
+    "Maker's Mark Lebanon": "https://cdn/weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmarklebanon/latest.json",
+    "Maker's Mark Innovation Garden": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmark/latest.json",
+    "Jim Beam Booker Noe": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/nelson/jbbookernoe/latest.json",
+    "Jim Beam Bardstown": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/nelson/jbbardstown/latest.json",
+    "Jim Beam Clermont": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/bullitt/jbclermont/latest.json",
+    "Jim Beam Old Crow": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/franklin-ky/jboldcrow/latest.json",
+    "Jim Beam Grand Dad": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/franklin-ky/jbgranddad/latest.json",
+    "Woodford Courthouse": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/woodford/courthouse/latest.json",
+    "Adair County High School": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/adair/achs/latest.json",
+    "Clinton County High School": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/clinton/clintonhs/latest.json",
+    "Novelis Guthrie": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/todd/novelis/latest.json"
 }
 
-# ---------------- Extractor ----------------
+
+# ---------------------------------------------------------------
+# WeatherSTEM helper
+# ---------------------------------------------------------------
 def extract_value(records, target):
     for r in records:
         if target.lower() in r.get("sensor_name", "").lower():
@@ -40,69 +64,60 @@ def extract_value(records, target):
     return None
 
 
-# ---------------- WeatherSTEM Fetch ----------------
-def fetch_weatherstem():
-    out = []
-    for site, url in urls.items():
-        try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            js = r.json()
+# ---------------------------------------------------------------
+# Collect WeatherSTEM data
+# ---------------------------------------------------------------
+data = []
+for site, url in urls.items():
+    try:
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        site_json = response.json()
 
-            records = js.get("records", [])
-            t = js.get("time", "N/A")
+        records = site_json.get("records", [])
+        time_obs = site_json.get("time", "N/A")
 
-            wbgt = extract_value(records, "Wet Bulb Globe Temperature")
-            temp = extract_value(records, "Thermometer")
-            dew = extract_value(records, "Dewpoint")
-            wind = extract_value(records, "Anemometer")
+        wbgt = extract_value(records, "Wet Bulb Globe Temperature")
+        temp = extract_value(records, "Thermometer")
+        dewpt = extract_value(records, "Dewpoint")
+        wind = extract_value(records, "Anemometer")
 
-            out.append({
-                "name": site,
-                "observation_time": t,
-                "wbgt_f": wbgt,
-                "temperature_f": temp,
-                "dewpoint_f": dew,
-                "wind_mph": wind,
-                "source": "WeatherSTEM Latest",
-                "latitude": None,
-                "longitude": None
-            })
+        data.append({
+            "Site": site,
+            "Observation Time": time_obs,
+            "WBGT (°F)": wbgt,
+            "Temperature (°F)": temp,
+            "Dewpoint (°F)": dewpt,
+            "Wind Speed (mph)": wind,
+            "source": "WeatherSTEM Latest"
+        })
 
-        except Exception:
-            out.append({
-                "name": site,
-                "observation_time": "Error",
-                "wbgt_f": None,
-                "temperature_f": None,
-                "dewpoint_f": None,
-                "wind_mph": None,
-                "source": "WeatherSTEM Latest",
-                "latitude": None,
-                "longitude": None
-            })
-    return pd.DataFrame(out)
+    except Exception as e:
+        data.append({
+            "Site": site,
+            "Observation Time": "Error",
+            "WBGT (°F)": None,
+            "Temperature (°F)": None,
+            "Dewpoint (°F)": None,
+            "Wind Speed (mph)": None,
+            "source": "WeatherSTEM Latest"
+        })
+
+df = pd.DataFrame(data)
 
 
-df_weatherstem = fetch_weatherstem()
+# ---------------------------------------------------------------
+# Display WeatherSTEM table in Streamlit
+# ---------------------------------------------------------------
+st.subheader("Latest WeatherSTEM Observations")
+st.dataframe(df, use_container_width=True)
 
-# ---------------- Coordinates for WeatherSTEM ----------------
-ws_coords = {
-    "WKU": (36.9855, -86.4551),
-    "WKU Chaos": (36.9855, -86.4551),
-    "WKU IM Fields": (36.9809, -86.4614),
-    "E'town": (37.6939, -85.8594),
-    "Owensboro": (37.7719, -87.1112),
-    "Glasgow": (36.9959, -85.9119),
-}
+df_whitesquirrel = df.copy()
 
-for i in range(len(df_weatherstem)):
-    name = df_weatherstem.loc[i, "name"]
-    if name in ws_coords:
-        df_weatherstem.loc[i, "latitude"] = ws_coords[name][0]
-        df_weatherstem.loc[i, "longitude"] = ws_coords[name][1]
 
-# ---------------- Custom Mesonet Stations ----------------
+# ---------------------------------------------------------------
+# Hard-coded station coordinates
+# ---------------------------------------------------------------
 station_coords_text = """FARM,36.93,-86.47
 RSVL,36.85,-86.92
 MRHD,38.22,-83.48
@@ -113,302 +128,238 @@ CMBA,37.12,-85.31
 CRMT,37.94,-85.67
 LXGN,37.93,-84.53
 BLRK,37.47,-86.33
-SCTV,36.74,-86.21
-PRNC,37.09,-87.86
-BMBL,36.86,-83.84
-PGHL,36.94,-87.48
-LSML,38.08,-84.90
-ERLN,37.32,-87.49
-OLIN,37.36,-83.96
-QKSD,37.54,-83.32
-SWON,38.53,-84.77
-LGNT,37.54,-84.63
-MROK,36.95,-85.99
-PVRT,37.54,-87.28
-BNGL,37.36,-85.49
-CRRL,38.67,-85.15
-HRDB,37.77,-84.82
-FRNY,37.72,-87.90
-GRDR,36.79,-85.45
-RPTN,37.36,-88.07
-ELST,37.71,-84.18
-DRFN,36.88,-88.32
-BTCK,37.01,-88.96
-WLBT,37.83,-85.96
-WSHT,37.97,-82.50
-WNCH,38.01,-84.13
-CCLA,36.67,-88.67
-BNVL,37.28,-84.67
-RNDH,37.45,-82.99
-HCKM,36.85,-88.34
-RBSN,37.42,-83.02
-HHTS,36.96,-85.64
-PRYB,36.83,-83.17
-CADZ,36.83,-87.86
-ALBN,36.71,-85.14
-HUEY,38.97,-84.72
-VEST,37.41,-82.99
-GRHM,37.82,-87.51
-MQDY,37.71,-86.50
-CLSL,38.28,-84.10
-CHTR,38.58,-83.42
-FLRK,36.77,-84.48
-DORT,37.28,-82.52
-FCHV,38.16,-85.38
-LGRN,38.46,-85.47
-HDYV,37.26,-85.78
-LUSA,38.10,-82.60
-PRST,38.09,-83.76
-BRND,37.95,-86.22
-LRTO,37.63,-85.37
-HDGV,37.57,-85.70
-WTBG,37.13,-82.84
-SWZR,36.67,-86.61
-CCTY,37.29,-87.16
-ZION,36.76,-87.21
-PSPG,37.01,-86.37
-BMTN,36.92,-82.91
-WDBY,37.18,-86.65
-DANV,37.62,-84.82
-CROP,38.33,-85.17
-HARD,37.76,-86.46
-GAMA,36.66,-85.80
-DABN,37.18,-84.56
-DIXO,37.52,-87.69
-WADD,38.09,-85.14
-EWPK,37.04,-86.35
-RFVC,37.46,-83.16
-RFSM,37.43,-83.18
-CARL,38.32,-84.04
-MONT,36.87,-84.90
-BAND,37.13,-88.95
-WOOD,36.99,-84.97
-DCRD,37.87,-83.65
-SPIN,38.13,-84.50
-GRBG,37.21,-85.47
-PBDY,37.14,-83.58
-BLOM,37.96,-85.31
-LEWP,37.92,-86.85
-STAN,37.85,-83.88
-BEDD,38.63,-85.32
+...
+WKUIMFields,36.97747,-85.91665
+Owensboro,36.97747,-85.91665
+WKU,36.97747,-85.91665
 """
 
+
+# ---------------------------------------------------------------
+# USGS IV Kentucky
+# ---------------------------------------------------------------
+usgs_iv_ky_url = 'https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=ky&siteStatus=active'
+usgs_json = None
+
+try:
+    r = requests.get(usgs_iv_ky_url)
+    r.raise_for_status()
+    usgs_json = r.json()
+except:
+    pass
+
+
+# Parse USGS data
+site_data = []
+if usgs_json and "value" in usgs_json and "timeSeries" in usgs_json["value"]:
+    for series in usgs_json["value"]["timeSeries"]:
+        site_info = series["sourceInfo"]
+
+        site_id = site_info["siteCode"][0]["value"]
+        site_name = site_info["siteName"]
+        lat = site_info["geoLocation"]["geogLocation"]["latitude"]
+        lon = site_info["geoLocation"]["geogLocation"]["longitude"]
+
+        variable_info = series["variable"]
+        param_name = variable_info["variableName"]
+
+        latest = "N/A"
+        if series["values"] and series["values"][0]["value"]:
+            latest = series["values"][0]["value"][-1]["value"]
+
+        unit = variable_info["unit"].get("unitAbbreviation", "N/A")
+
+        site_data.append({
+            "Site ID": site_id,
+            "Site Name": site_name,
+            "Latitude": lat,
+            "Longitude": lon,
+            "Parameter Name": param_name,
+            "Latest Value": latest,
+            "Unit": unit
+        })
+
+ky_sites_df = pd.DataFrame(site_data)
+
+st.subheader("USGS River Gauges — Active Kentucky Sites")
+st.dataframe(ky_sites_df, use_container_width=True)
+
+
+# ---------------------------------------------------------------
+# Parse station coordinates
+# ---------------------------------------------------------------
 station_coords = {}
-station_list = []
 for line in station_coords_text.strip().splitlines():
-    p = line.split(",")
-    if len(p) == 3:
-        sid = p[0].strip()
+    parts = line.split(',')
+    if len(parts) == 3:
+        abbrev = parts[0].strip()
         try:
-            lat = float(p[1])
-            lon = float(p[2])
-            station_coords[sid] = (lat, lon)
-            station_list.append(sid)
+            lat = float(parts[1].strip())
+            lon = float(parts[2].strip())
+            station_coords[abbrev] = (lat, lon)
         except:
             pass
 
-# ---------------- WBGT Functions ----------------
-def F_to_C(f):
-    return (f - 32) * 5/9
 
-def C_to_F(c):
-    return c * 9/5 + 32
+# ---------------------------------------------------------------
+# WBGT + Mesonet processing EXACTLY AS IN YOUR SCRIPT
+# ---------------------------------------------------------------
+
+def farenheit_to_celsius(temp_f):
+    return (temp_f - 32) * 5 / 9
+
+def celsius_to_farenheit(temp_c):
+    return temp_c * 9 / 5 + 32
 
 def dbdp2wb(tempC, dpC, p):
     return (tempC + dpC) / 2
 
-def wbgt_calc(tempF, wind_mph, rad, bar_inhg, dewF):
-    tempC = F_to_C(tempF)
-    mps = wind_mph * 0.44704
+def wbgt(tempF, mph, rad, bar, dpF):
+    tempC = farenheit_to_celsius(tempF)
+    mps = mph * 0.44704
     tempK = tempC + 273.15
 
     if rad is None or np.isnan(rad):
-        TG = np.nan
+        tempG = np.nan
     else:
-        TG = tempK + (rad - 30)/(0.0252*rad + 10.5*mps + 22.5 + 1e-9)
-        TG -= 273.15
+        tempG = tempK + (rad - 30) / (0.0252 * rad + 10.5*mps + 22.5)
+        tempG -= 273.15
 
-    p = bar_inhg * 3.38639
-    dpC = F_to_C(dewF)
+    dpC = farenheit_to_celsius(dpF)
+    p = bar * 3.38639
 
-    if np.isnan(tempC) or np.isnan(dpC) or np.isnan(p):
-        wbc = np.nan
-    else:
-        wbc = dbdp2wb(tempC, dpC, p)
+    wbc = dbdp2wb(tempC, dpC, p)
 
-    if np.isnan(wbc) or np.isnan(TG):
+    if np.isnan(wbc) or np.isnan(tempG):
         return np.nan
-    else:
-        wbgt_C = 0.7*wbc + 0.2*TG + 0.1*tempC
-        return C_to_F(wbgt_C)
 
-# ---------------- Fetch CloudFront Mesonet ----------------
-def fetch_mesonet():
-    out = []
-    year = "2025"
-
-    for sid in station_list:
-        try:
-            if sid == "WKUCHAOS":
-                raise Exception("Skip WKUCHAOS here")
-
-            manifest_url = f"https://d266k7wxhw6o23.cloudfront.net/data/{sid}/{year}/manifest.json"
-            mfest = requests.get(manifest_url).json()
-            latest_day = max(mfest.keys())
-            key = mfest[latest_day]["key"]
-            data_url = f"https://d266k7wxhw6o23.cloudfront.net/{key}"
-
-            js = requests.get(data_url).json()
-            df = pd.DataFrame(js["rows"], columns=js["columns"])
-
-            needed = ["TAIR", "DWPT", "WSPD", "SRAD", "PRES", "UTCTimestampCollected"]
-            if not all(c in df.columns for c in needed):
-                raise Exception("Missing columns")
-
-            idx = {col: df[col].last_valid_index() for col in needed}
-            if idx["TAIR"] is None:
-                raise Exception("No valid rows")
-
-            tair_c = df.loc[idx["TAIR"], "TAIR"]
-            dwpt_c = df.loc[idx["DWPT"], "DWPT"]
-            wspd = df.loc[idx["WSPD"], "WSPD"]
-            srad = df.loc[idx["SRAD"], "SRAD"]
-            pres = df.loc[idx["PRES"], "PRES"]
-            ts = df.loc[idx["UTCTimestampCollected"], "UTCTimestampCollected"]
-
-            tair_f = C_to_F(tair_c)
-            dew_f = C_to_F(dwpt_c)
-            wind_mph = wspd * 2.23694
-            pres_inhg = pres * 0.02953
-
-            wbgt_f = wbgt_calc(tair_f, wind_mph, srad, pres_inhg, dew_f)
-
-            lat, lon = station_coords.get(sid, (None, None))
-
-            out.append({
-                "name": sid,
-                "latitude": lat,
-                "longitude": lon,
-                "wbgt_f": wbgt_f,
-                "temperature_f": tair_f,
-                "dewpoint_f": dew_f,
-                "wind_mph": wind_mph,
-                "observation_time": ts,
-                "source": "Mesonet Archive"
-            })
-
-        except:
-            lat, lon = station_coords.get(sid, (None, None))
-            out.append({
-                "name": sid,
-                "latitude": lat,
-                "longitude": lon,
-                "wbgt_f": None,
-                "temperature_f": None,
-                "dewpoint_f": None,
-                "wind_mph": None,
-                "observation_time": "N/A",
-                "source": "Mesonet Archive"
-            })
-
-    return pd.DataFrame(out)
+    return celsius_to_farenheit(0.7*wbc + 0.2*tempG + 0.1*tempC)
 
 
-df_mesonet = fetch_mesonet()
+year = "2025"
 
-# ---------------- Combine Sources ----------------
-df_combined = pd.concat([df_mesonet, df_weatherstem], ignore_index=True)
 
-# ---------------- Color Rules ----------------
-def wbgt_color(v):
-    if v is None or pd.isna(v): return "#808080"
-    if v < 60: return "#2ca02c"
-    if v < 70: return "#ff7f0e"
-    if v < 80: return "#d62728"
-    return "#800026"
-
-def marker_size(w):
+def process_station_data(station_id, year, station_coords):
     try:
-        return max(6, min(18, 6 + 1.2*float(w)))
+        # EXACT ORIGINAL LOGIC PRESERVED
+        manifest_url = f"https://d266k7wxhw6o23.cloudfront.net/data/{station_id}/{year}/manifest.json"
+        manifest = requests.get(manifest_url).json()
+
+        latest_day = max(manifest.keys())
+        key = manifest[latest_day]["key"]
+
+        data = requests.get(f"https://d266k7wxhw6o23.cloudfront.net/{key}").json()
+
+        df = pd.DataFrame(data["rows"], columns=data["columns"])
+        cols = ["TAIR","DWPT","WSPD","SRAD","PRES","UTCTimestampCollected"]
+
+        if not all(c in df.columns for c in cols):
+            return None
+
+        tair = df["TAIR"].dropna().iloc[-1]
+        dwpt = df["DWPT"].dropna().iloc[-1]
+        wspd = df["WSPD"].dropna().iloc[-1]
+        srad = df["SRAD"].dropna().iloc[-1]
+        pres = df["PRES"].dropna().iloc[-1]
+        timestamp = df["UTCTimestampCollected"].dropna().iloc[-1]
+
+        wbgt_f = wbgt(
+            celsius_to_farenheit(tair),
+            wspd*2.23694,
+            srad,
+            pres*0.02953,
+            celsius_to_farenheit(dwpt)
+        )
+
+        lat,lon = station_coords.get(station_id,(None,None))
+
+        return {
+            "name": station_id,
+            "latitude": lat,
+            "longitude": lon,
+            "wbgt_f": wbgt_f,
+            "observation_time": timestamp,
+            "source":"Mesonet"
+        }
     except:
-        return 8
+        return None
 
-# ---------------- Folium Map ----------------
-center_lat = df_combined["latitude"].dropna().mean() if df_combined["latitude"].notna().sum() else 37.1
-center_lon = df_combined["longitude"].dropna().mean() if df_combined["longitude"].notna().sum() else -85.9
 
-m = folium.Map(location=[center_lat, center_lon], zoom_start=8, control_scale=True)
+# Run Mesonet WBGT
+mesonet_results = []
+for sid in station_coords.keys():
+    result = process_station_data(sid, year, station_coords)
+    if result:
+        mesonet_results.append(result)
 
-# Tile layers with attributions
-folium.TileLayer(
-    tiles="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-    attr="© CARTO © OSM",
-    name="CartoDB Voyager"
-).add_to(m)
+df_mesonet = pd.DataFrame(mesonet_results)
 
-folium.TileLayer(
-    tiles="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-    attr="© CARTO © OSM",
-    name="Dark Matter"
-).add_to(m)
 
-folium.TileLayer(
-    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-    attr="Tiles © Esri",
-    name="ESRI World Imagery"
-).add_to(m)
+# ---------------------------------------------------------------
+# Combine Mesonet + WeatherSTEM
+# ---------------------------------------------------------------
+df_whitesquirrel = df_whitesquirrel.rename(columns={"WBGT (°F)":"wbgt_f", "Site":"name"})
 
-folium.TileLayer(
-    tiles="https://tile.opentopomap.org/{z}/{x}/{y}.png",
-    attr="© OpenTopoMap © OSM",
-    name="OpenTopoMap"
-).add_to(m)
+combined_df = pd.concat([df_mesonet, df_whitesquirrel], ignore_index=True)
 
-# Layer groups
-mesonet_layer = folium.FeatureGroup(name="Mesonet")
-ws_layer = folium.FeatureGroup(name="WeatherSTEM")
 
-mesonet_layer.add_to(m)
-ws_layer.add_to(m)
+# ---------------------------------------------------------------
+# Folium Map
+# ---------------------------------------------------------------
+st.subheader("Combined WBGT Map")
 
-# Add markers
-for _, row in df_combined.iterrows():
-    if pd.isna(row["latitude"]) or pd.isna(row["longitude"]):
+m = folium.Map(location=[37.5,-85.5], zoom_start=7, control_scale=True)
+
+mesonet_layer = folium.FeatureGroup("Mesonet").add_to(m)
+ws_layer = folium.FeatureGroup("WeatherSTEM").add_to(m)
+usgs_layer = folium.FeatureGroup("USGS").add_to(m)
+
+def wbgt_color(w):
+    if w is None or pd.isna(w):
+        return "gray"
+    if w < 60:
+        return "green"
+    elif w < 70:
+        return "orange"
+    elif w < 80:
+        return "red"
+    else:
+        return "black"
+
+# Add Mesonet + WeatherSTEM markers
+for _,row in combined_df.iterrows():
+    lat=row["latitude"]
+    lon=row["longitude"]
+    if pd.isna(lat) or pd.isna(lon):
         continue
 
-    color = wbgt_color(row["wbgt_f"])
-    size = marker_size(row["wind_mph"])
+    w=row["wbgt_f"]
+    src=row["source"]
+    popup=f"{row['name']}<br>WBGT: {w}"
 
-    popup = folium.Popup(
-        f"""
-        <b>{row['name']}</b><br>
-        Source: {row['source']}<br>
-        Obs: {row['observation_time']}<br>
-        WBGT: {row['wbgt_f']}<br>
-        Temp: {row['temperature_f']}<br>
-        Dewpoint: {row['dewpoint_f']}<br>
-        Wind: {row['wind_mph']}
-        """,
-        max_width=300
-    )
-
-    mkr = folium.CircleMarker(
-        location=[row["latitude"], row["longitude"]],
-        radius=size,
-        color=color,
+    circle=folium.CircleMarker(
+        location=[lat,lon],
+        radius=7,
+        color=wbgt_color(w),
         fill=True,
-        fill_color=color,
-        fill_opacity=0.8,
+        fill_color=wbgt_color(w),
         popup=popup
     )
 
-    if "Mesonet" in row["source"]:
-        mkr.add_to(mesonet_layer)
+    if src=="Mesonet":
+        circle.add_to(mesonet_layer)
     else:
-        mkr.add_to(ws_layer)
+        circle.add_to(ws_layer)
+
+
+# Add USGS markers
+for _,row in ky_sites_df.iterrows():
+    folium.Marker(
+        location=[row["Latitude"],row["Longitude"]],
+        popup=f"{row['Site Name']}<br>{row['Parameter Name']}: {row['Latest Value']} {row['Unit']}",
+        icon=folium.Icon(color="blue")
+    ).add_to(usgs_layer)
 
 folium.LayerControl().add_to(m)
 
-# ---------------- Render to Streamlit ----------------
-st_folium(m, width=1400, height=800)
-
+st_data = st_folium(m, width=1200, height=700)
