@@ -17,7 +17,10 @@ st.set_page_config(page_title="KY WBGT Map", layout="wide")
 st.title("🌡️ Kentucky WBGT / Weather Map — Integrated WeatherSTEM + Custom Mesonet")
 
 # ---------------- Auto-refresh every 5 min ----------------
-st_autorefresh = st.experimental_rerun
+st.experimental_set_query_params(ts=int(time.time()))
+time.sleep(300)
+st.experimental_rerun()
+
 
 # ---------------- WeatherSTEM URLs ----------------
 urls = {
