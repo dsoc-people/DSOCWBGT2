@@ -207,15 +207,35 @@ selected_county = st.sidebar.selectbox("Select a Kentucky County:", county_list)
 
 # Mapping for compact IDs to WeatherSTEM URL keys
 # Moved up here for wider scope and logical grouping
+# ---------------- Name Mapping: ABBREV → WeatherSTEM Station Name ----------------
+# ONLY WeatherSTEM stations need to be listed here.
 name_variants = {
-    "WKUChaos": "WKU Chaos",
-    "WKUCHAOS": "WKU Chaos",
-    "Etown": "E'town",
-    "WKUIMFields": "WKU IM Fields",
-    "Owensboro": "Owensboro",
-    "Glasgow": "Glasgow",
     "WKU": "WKU",
+    "WKUC": "WKU Chaos",
+    "WKUIM": "WKU IM Fields",
+    "ETWN": "E'town",
+    "OWBO": "Owensboro",
+    "GLAS": "Glasgow",
+
+    # Maker's Mark stations
+    "MMWH": "Maker's Mark Warehouse",
+    "MMSM": "Maker's Mark St Mary",
+    "MMLB": "Maker's Mark Lebanon",
+    "MMIG": "Maker's Mark Innovation Garden",
+
+    # Jim Beam stations
+    "JBBN": "Jim Beam Booker Noe",
+    "JBBT": "Jim Beam Bardstown",
+    "JBCL": "Jim Beam Clermont",
+    "JBOC": "Jim Beam Old Crow",
+    "JBGD": "Jim Beam Grand Dad",
+
+    "WOOD": "Woodford County Courthouse",
+    "ACHS": "Adair County High School",
+    "CCHS": "Clinton County High School",
+    "NVGT": "Novelis Guthrie"
 }
+
 
 # ---------------- WeatherSTEM URLs ----------------
 urls = {
