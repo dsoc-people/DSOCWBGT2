@@ -103,6 +103,26 @@ BLOM,37.96,-85.31
 LEWP,37.92,-86.85
 STAN,37.85,-83.88
 BEDD,38.63,-85.32
+WKUCHAOS,36.98582726072027,-86.44967208166477
+WKUChaos,36.98582632147347,-86.44968800031974
+Etown,37.69563805082102,-85.88387790284976
+Glasgow,36.9774781561,-85.916651431
+WKUIMFields,36.9774781561,-85.9166514315
+Owensboro,36.9774781561,-85.9166514315
+WKU,36.9774781561,-85.9166514315
+Makers Mark Warehouse,37.6333457845,-85.4075842212
+Makers Mark St Mary,37.5707524233,-85.3743790708
+Makers Mark Lebanon,37.5758692691,-85.2736659636
+Maker's Mark Innovation Garden,37.64686,-85.34895
+JimBeam Booker Noe,37.8127589004,-85.6849316392
+JimBeam Bardstown,37.8344634433,-85.4711423977
+JimBeam Clermont,37.9317945798,-85.6520369416
+JimBeam Old Crow,38.1463823354,-84.8415031586
+JimBeam Grand Dad,38.215725282,-84.8093261477
+Woodford County Courthouse,38.052717,-84.73067
+Adair County High School,37.107667,-85.32824
+Clinton County High School,36.708211,-85.131276
+Novelis Guthrie,36.6025431022,-87.7186136559
 """
 
 
@@ -207,35 +227,15 @@ selected_county = st.sidebar.selectbox("Select a Kentucky County:", county_list)
 
 # Mapping for compact IDs to WeatherSTEM URL keys
 # Moved up here for wider scope and logical grouping
-# ---------------- Name Mapping: ABBREV → WeatherSTEM Station Name ----------------
-# ONLY WeatherSTEM stations need to be listed here.
 name_variants = {
+    "WKUChaos": "WKU Chaos",
+    "WKUCHAOS": "WKU Chaos",
+    "Etown": "E'town",
+    "WKUIMFields": "WKU IM Fields",
+    "Owensboro": "Owensboro",
+    "Glasgow": "Glasgow",
     "WKU": "WKU",
-    "WKUC": "WKU Chaos",
-    "WKUIM": "WKU IM Fields",
-    "ETWN": "E'town",
-    "OWBO": "Owensboro",
-    "GLAS": "Glasgow",
-
-    # Maker's Mark stations
-    "MMWH": "Maker's Mark Warehouse",
-    "MMSM": "Maker's Mark St Mary",
-    "MMLB": "Maker's Mark Lebanon",
-    "MMIG": "Maker's Mark Innovation Garden",
-
-    # Jim Beam stations
-    "JBBN": "Jim Beam Booker Noe",
-    "JBBT": "Jim Beam Bardstown",
-    "JBCL": "Jim Beam Clermont",
-    "JBOC": "Jim Beam Old Crow",
-    "JBGD": "Jim Beam Grand Dad",
-
-    "WOOD": "Woodford County Courthouse",
-    "ACHS": "Adair County High School",
-    "CCHS": "Clinton County High School",
-    "NVGT": "Novelis Guthrie"
 }
-
 
 # ---------------- WeatherSTEM URLs ----------------
 urls = {
