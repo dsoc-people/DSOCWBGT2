@@ -708,7 +708,7 @@ def upload_map_to_github(map_filename):
             github_token = None
         
         if not github_token:
-            github_token = os.getenv("GITHUB_TOKEN")
+            github_token = os.getenv("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")
         
         if not github_token:
             # Try to use git command as fallback
@@ -963,13 +963,13 @@ def main():
                 
                 2. **Set the token as an environment variable:**
                    ```bash
-                   export GITHUB_TOKEN=your_token_here
+                   export GITHUB_TOKEN=
                    ```
                 
                 3. **Or set it in your Streamlit secrets:**
                    Create `.streamlit/secrets.toml`:
                    ```toml
-                   GITHUB_TOKEN = "your_token_here"
+                   GITHUB_TOKEN = ""
                    ```
                 
                 4. **Restart your Streamlit app**
