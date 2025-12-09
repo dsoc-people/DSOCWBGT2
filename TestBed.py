@@ -1,6 +1,11 @@
-# app.py
-# -*- coding: utf-8 -*-
-# Streamlit App — Kentucky WBGT + WeatherSTEM + Mesonet + USGS Map (stable county focus, no flicker)
+# app.py — Kentucky WBGT / Multi-Source Weather + USGS Map Dashboard
+# Clean version with:
+#   ✔ WeatherSTEM toggle
+#   ✔ Mesonet toggle
+#   ✔ USGS river gauges toggle
+#   ✔ NO county focus view
+#   ✔ Blue USGS water-drop icons
+#   ✔ Full USGS parameter popups (Style B)
 
 import requests
 import pandas as pd
@@ -10,11 +15,11 @@ from streamlit_folium import st_folium
 import streamlit as st
 import inspect
 from streamlit_autorefresh import st_autorefresh
-import geopandas as gpd
 from shapely.geometry import Point
 import branca.colormap as cm
 
-# ---------------- Custom Station Coordinates ----------------
+
+# ---------------- Station Coordinates (Mesonet + WeatherSTEM) ----------------
 station_coords_text = """FARM,36.93,-86.47
 RSVL,36.85,-86.92
 MRHD,38.22,-83.48
@@ -122,59 +127,75 @@ Clinton County High School,36.708211,-85.131276
 Novelis Guthrie,36.6025431022,-87.7186136559
 """
 
+
 # ---------------- Streamlit Setup ----------------
 st.set_page_config(page_title="Kentucky WBGT Monitor", layout="wide")
 st.title("🌡️ Kentucky WBGT / Weather Map Dashboard")
 
+# Safe autorefresh
 sig = inspect.signature(st_autorefresh)
 if "rerun" in sig.parameters:
-    refresh_counter = st_autorefresh(interval=300000, limit=None, key="wbgt_refresh", rerun=False)
+    st_autorefresh(interval=300000, limit=None, key="wbgt_refresh", rerun=False)
 else:
-    refresh_counter = st_autorefresh(interval=300000, limit=None, key="wbgt_refresh")
-
-if "last_map" not in st.session_state:
-    st.session_state["last_map"] = None
+    st_autorefresh(interval=300000, limit=None, key="wbgt_refresh")
 
 year = "2025"
 
+
 # ---------------- Sidebar ----------------
-st.sidebar.header("Map Controls")
 selected_var = st.sidebar.selectbox(
     "Variable to Display:",
     ["WBGT (°F)", "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)"]
 )
 
-# ---------------- Load County Shapes ----------------
+st.sidebar.subheader("Data Layers")
+show_mesonet = st.sidebar.checkbox("Show Mesonet", value=True)
+show_weatherstem = st.sidebar.checkbox("Show WeatherSTEM (White Squirrel)", value=True)
+show_usgs = st.sidebar.checkbox("Show USGS River Gauges", value=True)
+
+
+# ---------------- Helper Functions ----------------
+def extract_value(records, target):
+    for r in records:
+        if target.lower() in r.get("sensor_name", "").lower():
+            return r.get("value")
+    return None
+
+def farenheit_to_celsius(f): return (f - 32) * 5 / 9
+def celsius_to_farenheit(c): return c * 9 / 5 + 32
+def dbdp2wb(tc, dc, p): return (tc + dc) / 2
+
+def wbgt(tempF, mph, rad, bar, dpF):
+    tempC = farenheit_to_celsius(tempF)
+    mps = mph * 0.44704
+    tempK = tempC + 273.15
+    tempG = np.nan if rad is None else (
+        tempK + (rad - 30) / (0.0252 * rad + 10.5*mps + 22.5) - 273.15
+    )
+    p = bar * 3.38639
+    dpC = farenheit_to_celsius(dpF)
+    wbc = dbdp2wb(tempC, dpC, p)
+    wbgt_c = 0.7*wbc + 0.2*tempG + 0.1*tempC
+    return celsius_to_farenheit(wbgt_c)
+
+
+# ---------------- Parse Coordinates ----------------
 @st.cache_data
-def load_ky_counties():
-    try:
-        url = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json"
-        j = requests.get(url, timeout=10).json()
-        feats = [f for f in j["features"] if f["properties"]["STATE"] == "21"]
-        for f in feats:
-            f["properties"]["NAME"] = f["properties"]["NAME"].title()
-        return gpd.GeoDataFrame.from_features(feats, crs="EPSG:4326")
-    except:
-        return gpd.GeoDataFrame()
+def load_station_coords():
+    rows = []
+    for line in station_coords_text.strip().split("\n"):
+        parts = line.split(",")
+        if len(parts) == 3:
+            rows.append({
+                "name": parts[0],
+                "lat": float(parts[1]),
+                "lon": float(parts[2])
+            })
+    df = pd.DataFrame(rows)
+    return df, {r["name"]: (r["lat"], r["lon"]) for _, r in df.iterrows()}
 
-counties_gdf = load_ky_counties()
-county_list = sorted(counties_gdf["NAME"].unique())
-selected_county = st.sidebar.selectbox("Select a Kentucky County:", county_list)
+stations_df, station_coords = load_station_coords()
 
-# ---------------- Name Normalization ----------------
-name_variants = {
-    "WKUCHAOS": "WKU Chaos",
-    "WKUChaos": "WKU Chaos",
-    "Makers Mark Warehouse": "Maker's Mark Warehouse",
-    "Makers Mark St Mary": "Maker's Mark St Mary",
-    "Makers Mark Lebanon": "Maker's Mark Lebanon",
-    "JimBeam Booker Noe": "Jim Beam Booker Noe",
-    "JimBeam Bardstown": "Jim Beam Bardstown",
-    "JimBeam Clermont": "Jim Beam Clermont",
-    "JimBeam Old Crow": "Jim Beam Old Crow",
-    "JimBeam Grand Dad": "Jim Beam Grand Dad",
-    "Etown": "E'town"
-}
 
 # ---------------- WeatherSTEM URLs ----------------
 urls = {
@@ -190,284 +211,256 @@ urls = {
     "Maker's Mark Innovation Garden": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/marion-ky/makersmark/latest.json",
     "Jim Beam Booker Noe": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/nelson/jbbookernoe/latest.json",
     "Jim Beam Bardstown": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/nelson/jbbardstown/latest.json",
-    "Jim Beam Clermont": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/bullitt/jbclermont/latest.json",
-    "Jim Beam Old Crow": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/franklin-ky/jboldcrow/latest.json",
+    "Jim Beam Clermont": "https://cdn/weatherstem.com/dashboard/data/dynamic/model/bullitt/jbclermont/latest.json",
+    "Jim Beam Old Crow": "https://cdn/weatherstem.com/dashboard/data/dynamic/model/franklin-ky/jboldcrow/latest.json",
     "Jim Beam Grand Dad": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/franklin-ky/jbgranddad/latest.json",
     "Woodford County Courthouse": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/woodford/courthouse/latest.json",
     "Clinton County High School": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/clinton/clintonhs/latest.json",
-    "Novelis Guthrie": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/todd/novelis/latest.json"
+    "Novelis Guthrie": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/todd/novelis/latest.json",
 }
 
-# ---------------- Helper Functions ----------------
-def extract_value(records, target):
-    for r in records:
-        if target.lower() in r.get("sensor_name", "").lower():
-            return r.get("value")
-    return None
 
-def farenheit_to_celsius(f): return (f - 32) * 5/9
-def celsius_to_farenheit(c): return c * 9/5 + 32
-def dbdp2wb(tc, dc, p): return (tc + dc) / 2
-
-def wbgt(tempF, mph, rad, bar, dpF):
-    tempC = farenheit_to_celsius(tempF)
-    mps = mph * 0.44704
-    tempK = tempC + 273.15
-    tempG = np.nan if rad is None or np.isnan(rad) else (
-        tempK + (rad - 30) / (0.0252*rad + 10.5*mps + 22.5) - 273.15
-    )
-    p = bar * 3.38639
-    dpC = farenheit_to_celsius(dpF)
-    wbc = dbdp2wb(tempC, dpC, p) if not(np.isnan(tempC) or np.isnan(dpC) or np.isnan(p)) else np.nan
-    wbgt_c = 0.7*wbc + 0.2*tempG + 0.1*tempC if not(np.isnan(wbc) or np.isnan(tempG) or np.isnan(tempC)) else np.nan
-    return celsius_to_farenheit(wbgt_c)
-
-# ---------------- Load Station Coordinates ----------------
-@st.cache_data
-def load_station_coords():
-    rows = []
-    for l in station_coords_text.strip().split("\n"):
-        p = l.split(",")
-        if len(p)==3:
-            rows.append({"abbrev": p[0], "lat": float(p[1]), "lon": float(p[2])})
-    df = pd.DataFrame(rows)
-    return df, {r["abbrev"]:(r["lat"],r["lon"]) for _,r in df.iterrows()}
-
-stations_df, station_coords = load_station_coords()
-
-# ---------------- Fetch WeatherSTEM ----------------
+# ---------------- WeatherSTEM Fetch ----------------
 @st.cache_data(ttl=300)
 def fetch_weatherstem_data():
-    result=[]
-    for site,url in urls.items():
+    rows = []
+    for site, url in urls.items():
         try:
-            j=requests.get(url,timeout=10).json()
-            rec=j.get("records",[])
-            result.append({
-                "name":site,
-                "observation_time":j.get("time","N/A"),
-                "WBGT (°F)":extract_value(rec,"Wet Bulb Globe Temperature"),
-                "Temperature (°F)":extract_value(rec,"Thermometer"),
-                "Dewpoint (°F)":extract_value(rec,"Dewpoint"),
-                "Wind Speed (mph)":extract_value(rec,"Anemometer"),
-                "source":"White Squirrel Weather"
+            j = requests.get(url, timeout=10).json()
+            r = j.get("records", [])
+            rows.append({
+                "name": site,
+                "observation_time": j.get("time", "N/A"),
+                "WBGT (°F)": extract_value(r, "Wet Bulb Globe Temperature"),
+                "Temperature (°F)": extract_value(r, "Thermometer"),
+                "Dewpoint (°F)": extract_value(r, "Dewpoint"),
+                "Wind Speed (mph)": extract_value(r, "Anemometer"),
+                "source": "WeatherSTEM"
             })
-        except:
-            result.append({
-                "name":site,"observation_time":"Error",
-                "WBGT (°F)":None,"Temperature (°F)":None,
-                "Dewpoint (°F)":None,"Wind Speed (mph)":None,
-                "source":"White Squirrel Weather"
+        except Exception:
+            rows.append({
+                "name": site,
+                "observation_time": "Error",
+                "WBGT (°F)": None,
+                "Temperature (°F)": None,
+                "Dewpoint (°F)": None,
+                "Wind Speed (mph)": None,
+                "source": "WeatherSTEM"
             })
-    return pd.DataFrame(result)
+    return pd.DataFrame(rows)
 
-# ---------------- Fetch Mesonet ----------------
+
+# ---------------- Mesonet Fetch ----------------
 @st.cache_data(ttl=300)
-def process_station_data(station_id, coords):
-    lat, lon = coords.get(station_id,(None,None))
+def fetch_mesonet_data(station_ids):
+    rows = []
+    for sid in station_ids:
+        rows.append(process_mesonet_station(sid))
+    return pd.DataFrame(rows)
+
+def process_mesonet_station(sid):
+    lat, lon = station_coords.get(sid, (None, None))
     try:
-        murl=f"https://d266k7wxhw6o23.cloudfront.net/data/{station_id}/{year}/manifest.json"
-        manifest=requests.get(murl,timeout=15).json()
-        latest=max(manifest.keys())
-        key=manifest[latest]["key"]
-        j=requests.get(f"https://d266k7wxhw6o23.cloudfront.net/{key}",timeout=15).json()
-        df=pd.DataFrame(j["rows"],columns=j["columns"])
-        tair,dew,wspd,srad,pres=df["TAIR"].dropna().iloc[-1],df["DWPT"].dropna().iloc[-1],df["WSPD"].dropna().iloc[-1],df["SRAD"].dropna().iloc[-1],df["PRES"].dropna().iloc[-1]
-        obs=df["UTCTimestampCollected"].dropna().iloc[-1]
-        wbgt_f=wbgt(celsius_to_farenheit(tair),wspd*2.23694,srad,pres*0.02953,celsius_to_farenheit(dew))
+        manifest_url = f"https://d266k7wxhw6o23.cloudfront.net/data/{sid}/{year}/manifest.json"
+        manifest = requests.get(manifest_url, timeout=10).json()
+        day = max(manifest.keys())
+        key = manifest[day]["key"]
+        data = requests.get(f"https://d266k7wxhw6o23.cloudfront.net/{key}", timeout=10).json()
+
+        df = pd.DataFrame(data["rows"], columns=data["columns"])
+        tair_c = df["TAIR"].dropna().iloc[-1]
+        dwpt_c = df["DWPT"].dropna().iloc[-1]
+        wspd_mps = df["WSPD"].dropna().iloc[-1]
+        srad = df["SRAD"].dropna().iloc[-1]
+        pres_hpa = df["PRES"].dropna().iloc[-1]
+        obs = df["UTCTimestampCollected"].dropna().iloc[-1]
+
+        wbgt_f = wbgt(
+            celsius_to_farenheit(tair_c),
+            wspd_mps * 2.23694,
+            srad,
+            pres_hpa * 0.02953,
+            celsius_to_farenheit(dwpt_c),
+        )
+
         return {
-            "name":station_id,"latitude":lat,"longitude":lon,
-            "WBGT (°F)":wbgt_f,
-            "Temperature (°F)":celsius_to_farenheit(tair),
-            "Dewpoint (°F)":celsius_to_farenheit(dew),
-            "Wind Speed (mph)":wspd*2.23694,
-            "observation_time":obs,
-            "source":"Mesonet"
-        }
-    except:
-        return {
-            "name":station_id,"latitude":lat,"longitude":lon,
-            "WBGT (°F)":None,"Temperature (°F)":None,"Dewpoint (°F)":None,
-            "Wind Speed (mph)":None,"observation_time":"Error","source":"Mesonet"
+            "name": sid,
+            "latitude": lat,
+            "longitude": lon,
+            "WBGT (°F)": wbgt_f,
+            "Temperature (°F)": celsius_to_farenheit(tair_c),
+            "Dewpoint (°F)": celsius_to_farenheit(dwpt_c),
+            "Wind Speed (mph)": wspd_mps * 2.23694,
+            "observation_time": obs,
+            "source": "Mesonet",
         }
 
-@st.cache_data(ttl=300)
-def fetch_mesonet_data(ids,coords):
-    return pd.DataFrame([process_station_data(i,coords) for i in ids])
+    except Exception:
+        return {
+            "name": sid,
+            "latitude": lat,
+            "longitude": lon,
+            "WBGT (°F)": None,
+            "Temperature (°F)": None,
+            "Dewpoint (°F)": None,
+            "Wind Speed (mph)": None,
+            "observation_time": "Error",
+            "source": "Mesonet",
+        }
 
-# ---------------- Fetch USGS ----------------
+
+# ---------------- USGS Fetch (Full Data Option 1) ----------------
 @st.cache_data(ttl=300)
 def fetch_usgs_data():
-    url="https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=ky&siteStatus=active"
+    url = "https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=ky&siteStatus=active"
     try:
-        r=requests.get(url,timeout=30); r.raise_for_status()
-        j=r.json()
-        rows=[]
-        for ts in j.get("value",{}).get("timeSeries",[]):
-            info, var = ts["sourceInfo"], ts["variable"]
-            site_id=info["siteCode"][0]["value"]
-            lat=info["geoLocation"]["geogLocation"]["latitude"]
-            lon=info["geoLocation"]["geogLocation"]["longitude"]
-            name=info["siteName"]
-            param=var["variableName"]
-            unit=var["unit"].get("unitAbbreviation","")
-            val="N/A"
-            if ts["values"] and ts["values"][0]["value"]:
-                val=ts["values"][0]["value"][-1]["value"]
+        j = requests.get(url, timeout=15).json()
+        series = j["value"]["timeSeries"]
+
+        rows = []
+        for s in series:
+            info = s["sourceInfo"]
+            var = s["variable"]
+
+            lat = info["geoLocation"]["geogLocation"]["latitude"]
+            lon = info["geoLocation"]["geogLocation"]["longitude"]
+
+            name = info["siteName"]
+            sid = info["siteCode"][0]["value"]
+            var_name = var["variableName"]
+            unit = var["unit"].get("unitAbbreviation", "")
+
+            # latest reading
+            val = None
+            if s["values"]:
+                vlist = s["values"][0]["value"]
+                if vlist:
+                    val = vlist[-1]["value"]
+
             rows.append({
-                "Site ID":site_id,"Site Name":name,
-                "Latitude":lat,"Longitude":lon,
-                "Parameter Name":param,"Latest Value":val,"Value Unit":unit
+                "Site ID": sid,
+                "Site Name": name,
+                "Latitude": lat,
+                "Longitude": lon,
+                "Parameter Name": var_name,
+                "Latest Value": val,
+                "Value Unit": unit,
             })
+
         return pd.DataFrame(rows)
-    except Exception as e:
-        st.error(f"USGS error: {e}")
-        return pd.DataFrame()
+
+    except Exception:
+        return pd.DataFrame(columns=[
+            "Site ID", "Site Name", "Latitude", "Longitude",
+            "Parameter Name", "Latest Value", "Value Unit"
+        ])
+
 
 # ---------------- Fetch All Data ----------------
-if refresh_counter:
-    fetch_weatherstem_data.clear()
-    fetch_mesonet_data.clear()
-    fetch_usgs_data.clear()
+ws_df = fetch_weatherstem_data() if show_weatherstem else pd.DataFrame()
+mesonet_ids = [n for n in station_coords.keys() if n not in urls]
+mesonet_df = fetch_mesonet_data(mesonet_ids) if show_mesonet else pd.DataFrame()
+usgs_df = fetch_usgs_data() if show_usgs else pd.DataFrame()
 
-with st.spinner("Fetching latest WBGT + USGS data..."):
-    # Filter mesonet list (exclude WeatherSTEM sites)
-    mesonet_ids=[]
-    for a in stations_df["abbrev"]:
-        if name_variants.get(a,a) not in urls:
-            mesonet_ids.append(a)
+# Add lat/lon to WeatherSTEM
+for i, row in ws_df.iterrows():
+    lat, lon = station_coords.get(row["name"], (None, None))
+    ws_df.loc[i, "latitude"] = lat
+    ws_df.loc[i, "longitude"] = lon
 
-    mesonet_df=fetch_mesonet_data(mesonet_ids,station_coords)
-    ws_df=fetch_weatherstem_data()
-    usgs_df=fetch_usgs_data()
+combined = pd.concat([mesonet_df, ws_df], ignore_index=True)
 
-# ---------------- Attach Coordinates to WeatherSTEM ----------------
-ws_df["latitude"]=None
-ws_df["longitude"]=None
-coord_lookup={}
 
-for ln in station_coords_text.split("\n"):
-    p=ln.split(",")
-    if len(p)==3:
-        raw=p[0]
-        norm=name_variants.get(raw,raw)
-        if norm in urls:
-            coord_lookup[norm]=(float(p[1]),float(p[2]))
-
-for i,row in ws_df.iterrows():
-    ws_df.loc[i,"latitude"]=coord_lookup.get(row["name"],(None,None))[0]
-    ws_df.loc[i,"longitude"]=coord_lookup.get(row["name"],(None,None))[1]
-
-# ---------------- Combine WeatherSTEM + Mesonet ----------------
-combined=pd.concat([mesonet_df,ws_df],ignore_index=True)
-
-# ---------------- Map Color Logic ----------------
-def variable_color(val,var):
-    if pd.isna(val): return "#808080"
-    if var in ["Temperature (°F)","Dewpoint (°F)"]:
-        return cm.LinearColormap(["#0000FF","#00FF00","#FF0000"],30,100)(val)
-    if var=="WBGT (°F)":
-        if val<66: return "#008000"
-        if val<74: return "#FEF200"
-        if val<83: return "#FF0000"
+# ---------------- Color Mapping ----------------
+def variable_color(val, var):
+    if pd.isna(val):
+        return "#808080"
+    if var in ["Temperature (°F)", "Dewpoint (°F)"]:
+        cmap = cm.LinearColormap(["#0000FF", "#00FF00", "#FF0000"], vmin=30, vmax=100)
+        return cmap(val)
+    if var == "WBGT (°F)":
+        if val < 66: return "#008000"
+        if val < 74: return "#FEF200"
+        if val < 83: return "#FF0000"
         return "#000000"
-    if var=="Wind Speed (mph)":
-        return cm.LinearColormap(["#FFFFFF","#00FFFF","#0000FF"],0,20)(val)
+    if var == "Wind Speed (mph)":
+        cmap = cm.LinearColormap(["#FFFFFF", "#00FFFF", "#0000FF"], vmin=0, vmax=20)
+        return cmap(val)
     return "#808080"
 
-# ---------------- Main Map ----------------
-center_lat=combined["latitude"].dropna().mean()
-center_lon=combined["longitude"].dropna().mean()
-m=folium.Map(location=[center_lat,center_lon],zoom_start=7,control_scale=True)
 
-# --- Add WeatherSTEM + Mesonet markers ---
-for _,row in combined.iterrows():
-    lat,lon=row["latitude"],row["longitude"]
-    if pd.isna(lat) or pd.isna(lon): continue
-    val=row[selected_var]
-    popup=f"<b>{row['name']} ({row['source']})</b><br>{selected_var}: {val if pd.notna(val) else 'N/A'}"
+# ---------------- MAIN MAP ----------------
+all_lats = combined["latitude"].dropna().tolist()
+if show_usgs:
+    all_lats += usgs_df["Latitude"].dropna().tolist()
+
+all_lons = combined["longitude"].dropna().tolist()
+if show_usgs:
+    all_lons += usgs_df["Longitude"].dropna().tolist()
+
+center_lat = np.mean(all_lats) if all_lats else 37.5
+center_lon = np.mean(all_lons) if all_lons else -85.5
+
+m = folium.Map(location=[center_lat, center_lon], zoom_start=7, control_scale=True)
+
+
+# --- Mesonet + WeatherSTEM markers ---
+for _, row in combined.iterrows():
+    src = row["source"]
+    if src == "Mesonet" and not show_mesonet:
+        continue
+    if src == "WeatherSTEM" and not show_weatherstem:
+        continue
+
+    lat, lon = row["latitude"], row["longitude"]
+    if pd.isna(lat) or pd.isna(lon):
+        continue
+
+    val = row.get(selected_var)
+    popup = (
+        f"<b>{row['name']} ({row['source']})</b><br>"
+        f"{selected_var}: {val if pd.notna(val) else 'N/A'}<br>"
+        f"Observed: {row['observation_time']}"
+    )
+
     folium.CircleMarker(
-        location=[lat,lon],
+        location=[lat, lon],
         radius=7,
-        color="black" if row["source"]=="White Squirrel Weather" else variable_color(val,selected_var),
-        weight=2 if row["source"]=="White Squirrel Weather" else 1,
+        color="black" if row["source"] == "WeatherSTEM" else variable_color(val, selected_var),
+        weight=2 if row["source"] == "WeatherSTEM" else 1,
         fill=True,
-        fill_color=variable_color(val,selected_var),
+        fill_color=variable_color(val, selected_var),
         fill_opacity=0.85,
-        popup=popup
+        popup=popup,
     ).add_to(m)
 
-# --- Add USGS markers statewide ---
-for _,r in usgs_df.iterrows():
-    folium.Marker(
-        location=[r["Latitude"],r["Longitude"]],
-        tooltip=f"{r['Site Name']}",
-        icon=folium.Icon(color="blue",icon="tint",prefix="fa"),
-        popup=(
-            f"<b>{r['Site Name']}</b><br>"
-            f"Site ID: {r['Site ID']}<br>"
-            f"{r['Parameter Name']}: {r['Latest Value']} {r['Value Unit']}"
+
+# --- USGS markers ---
+if show_usgs and not usgs_df.empty:
+    for sid in usgs_df["Site ID"].unique():
+        subset = usgs_df[usgs_df["Site ID"] == sid]
+        first = subset.iloc[0]
+
+        lat = first["Latitude"]
+        lon = first["Longitude"]
+
+        popup_html = (
+            f"<b>{first['Site Name']}</b><br>"
+            f"Site ID: {sid}<br>"
         )
-    ).add_to(m)
 
-st.session_state["last_map"]=m
-st_folium(m,width=1000,height=650)
+        # append parameters for this site
+        for _, r in subset.iterrows():
+            if r["Latest Value"] is not None:
+                popup_html += f"{r['Parameter Name']}: {r['Latest Value']} {r['Value Unit']}<br>"
 
-# ---------------- County Focus Map ----------------
-st.markdown("### 🧭 County Focus View")
+        folium.Marker(
+            location=[lat, lon],
+            icon=folium.Icon(color="blue", icon="tint", prefix="fa"),
+            tooltip=f"{first['Site Name']} ({sid})",
+            popup=popup_html
+        ).add_to(m)
 
-geom=counties_gdf[counties_gdf["NAME"]==selected_county].geometry.iloc[0]
-b=geom.bounds
-county_map=folium.Map(
-    location=[(b[1]+b[3])/2,(b[0]+b[2])/2],
-    zoom_start=9,control_scale=True
-)
 
-folium.GeoJson(
-    geom.__geo_interface__,
-    style_function=lambda x:{
-        "fillColor":"#ff7800",
-        "color":"black",
-        "weight":2,
-        "fillOpacity":0.25
-    }
-).add_to(county_map)
-
-# --- Filter WBGT stations inside polygon ---
-points=[Point(lon,lat) for lon,lat in zip(combined["longitude"],combined["latitude"])]
-combined["in_county"]=[geom.contains(p) for p in points]
-
-for _,row in combined[combined["in_county"]].iterrows():
-    val=row[selected_var]
-    folium.CircleMarker(
-        location=[row.latitude,row.longitude],
-        radius=8,
-        color="black" if row["source"]=="White Squirrel Weather" else variable_color(val,selected_var),
-        weight=2 if row["source"]=="White Squirrel Weather" else 1,
-        fill=True,
-        fill_color=variable_color(val,selected_var),
-        fill_opacity=0.9,
-        popup=(
-            f"<b>{row['name']} ({row['source']})</b><br>"
-            f"{selected_var}: {val if pd.notna(val) else 'N/A'}"
-        )
-    ).add_to(county_map)
-
-# --- Filter USGS inside county polygon ---
-usgs_points=[Point(r["Longitude"],r["Latitude"]) for _,r in usgs_df.iterrows()]
-inside=[geom.contains(p) for p in usgs_points]
-usgs_subset=usgs_df[inside]
-
-for _,r in usgs_subset.iterrows():
-    folium.Marker(
-        location=[r["Latitude"],r["Longitude"]],
-        tooltip=r["Site Name"],
-        icon=folium.Icon(color="blue",icon="tint",prefix="fa"),
-        popup=(
-            f"<b>{r['Site Name']}</b><br>"
-            f"Site ID: {r['Site ID']}<br>"
-            f"{r['Parameter Name']}: {r['Latest Value']} {r['Value Unit']}"
-        )
-    ).add_to(county_map)
-
-st_folium(county_map,width=850,height=450)
+# ---------------- RENDER MAP ----------------
+st_folium(m, width=1100, height=700)
