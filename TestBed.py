@@ -268,6 +268,8 @@ def process_mesonet_station(station_id, year, station_coords):
             "latitude": latitude,
             "longitude": longitude,
             "wbgt_f": wbgt_f,
+            "Temperature (°F)": tair_f,
+            "Dewpoint (°F)": dwpt_f,
             "observation_time": observation_time,
             "source": "Mesonet"  # Explicitly set source for Mesonet stations
         }
