@@ -11,8 +11,8 @@ import folium
 from folium.plugins import FloatImage
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
-from streamlit_folium import st_folium
 import math
+from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 import base64
 import os
@@ -43,7 +43,6 @@ def wbgt(tempF, mph, rad, bar, dpF):
     if mph is None:
         mph = np.nan
     if rad is None:
-    if rad is None or np.isnan(rad):
         rad = np.nan
     if bar is None:
         bar = np.nan
@@ -54,8 +53,9 @@ def wbgt(tempF, mph, rad, bar, dpF):
     mps = mph * 0.44704
     tempK = tempC + 273.15
 
-    if np.isnan(rad):
+    if rad is None or np.isnan(rad):
         tempG = np.nan
+    else:
         tempG = tempK + (rad - 30) / (0.0252 * rad + 10.5 * mps + 22.5 + 1e-9)
         tempG = tempG - 273.15
 
@@ -216,12 +216,6 @@ def process_mesonet_station(station_id, year, station_coords):
             raise ValueError("Empty manifest")
 
         latest_day = max(manifest.keys())
-        # Use the exact approach from the working code
-        tair_c, dwpt_c, wspd_mps, srad, pres_hpa = [
-            df[c].dropna().iloc[-1] for c in cols[:-1]
-        ]
-        pres_inhg = pres_hpa * 0.02953
-        obs_time = df["UTCTimestampCollected"].dropna().iloc[-1]
         key = manifest[latest_day]["key"]
         data = requests.get(
             f"https://d266k7wxhw6o23.cloudfront.net/{key}",
@@ -232,39 +226,34 @@ def process_mesonet_station(station_id, year, station_coords):
         if not all(c in df.columns for c in cols):
             raise ValueError("Missing required columns")
 
-        # Safely extract values - handle empty columns
-        def safe_extract(col_name):
-        if tair_c is not None:
-            tair_f = celsius_to_farenheit(tair_c)
-        else:
-            tair_f = None
-            
-        if dwpt_c is not None:
-            dwpt_f = celsius_to_farenheit(dwpt_c)
-        else:
-            dwpt_f = None
-            
-        if wspd_mps is not None:
-            wspd_mph = wspd_mps * 2.23694
-        else:
-            wspd_mph = None
+        # Use the exact approach from the working code
+        tair_c, dwpt_c, wspd_mps, srad, pres_hpa = [
+            df[c].dropna().iloc[-1] for c in cols[:-1]
+        ]
+        pres_inhg = pres_hpa * 0.02953
+        obs_time = df["UTCTimestampCollected"].dropna().iloc[-1]
 
-        # Calculate WBGT (function handles None values)
-        wbgt_f = wbgt(tair_f, wspd_mph, srad, pres_inhg, dwpt_f)
+        # Calculate WBGT using the same approach as working code
+        wbgt_f = wbgt(
+            celsius_to_farenheit(tair_c),
+            wspd_mps * 2.23694,
+            srad,
+            pres_inhg,
+            celsius_to_farenheit(dwpt_c),
+        )
 
-        # Explicitly return with all required columns - ensure values are not numpy types
-        result = {
-            "name": str(station_id),
-            "latitude": float(lat) if lat is not None else None,
-            "longitude": float(lon) if lon is not None else None,
-            "wbgt_f": float(wbgt_f) if not pd.isna(wbgt_f) else None,
-            "Temperature (°F)": float(tair_f) if not pd.isna(tair_f) else None,
-            "Dewpoint (°F)": float(dwpt_f) if not pd.isna(dwpt_f) else None,
-            "Wind Speed (mph)": float(wspd_mph) if not pd.isna(wspd_mph) else None,
-            "observation_time": str(obs_time) if obs_time is not None else "N/A",
+        # Return with exact same structure as working code
+        return {
+            "name": station_id,
+            "latitude": lat,
+            "longitude": lon,
+            "wbgt_f": wbgt_f,
+            "Temperature (°F)": celsius_to_farenheit(tair_c),
+            "Dewpoint (°F)": celsius_to_farenheit(dwpt_c),
+            "Wind Speed (mph)": wspd_mps * 2.23694,
+            "observation_time": obs_time,
             "source": "Mesonet",
         }
-        return result
 
     except Exception as e:
         # Always return a row even on error, matching the provided code
@@ -828,16 +817,6 @@ def main():
         show_mesonet = st.checkbox("Mesonet", value=True)
         show_usgs = st.checkbox("USGS River Gauges", value=True)
         
-            # Verify Temperature and Dewpoint columns exist
-            if not df_mesonet.empty:
-                if "Temperature (°F)" not in df_mesonet.columns:
-                    st.error(f"❌ Mesonet dataframe missing 'Temperature (°F)' column! Columns: {list(df_mesonet.columns)}")
-                if "Dewpoint (°F)" not in df_mesonet.columns:
-                    st.error(f"❌ Mesonet dataframe missing 'Dewpoint (°F)' column! Columns: {list(df_mesonet.columns)}")
-                # Debug: Show first row structure
-                if len(df_mesonet) > 0:
-                    first_row = df_mesonet.iloc[0].to_dict()
-                    st.write("🔍 First Mesonet row keys:", list(first_row.keys()))
         st.header("Settings")
         year = st.selectbox("Year", ["2025", "2024", "2023"], index=0)
         selected_measurement = st.selectbox(
@@ -876,6 +855,16 @@ def main():
             station_coords, station_abbreviations = get_station_coordinates()
             df_mesonet = fetch_mesonet_data(year, station_coords, station_abbreviations)
             # Source is already set in process_mesonet_station function
+            # Verify Temperature and Dewpoint columns exist
+            if not df_mesonet.empty:
+                if "Temperature (°F)" not in df_mesonet.columns:
+                    st.error(f"❌ Mesonet dataframe missing 'Temperature (°F)' column! Columns: {list(df_mesonet.columns)}")
+                if "Dewpoint (°F)" not in df_mesonet.columns:
+                    st.error(f"❌ Mesonet dataframe missing 'Dewpoint (°F)' column! Columns: {list(df_mesonet.columns)}")
+                # Debug: Show first row structure
+                if len(df_mesonet) > 0:
+                    first_row = df_mesonet.iloc[0].to_dict()
+                    st.write("🔍 First Mesonet row keys:", list(first_row.keys()))
         else:
             df_mesonet = pd.DataFrame()
 
