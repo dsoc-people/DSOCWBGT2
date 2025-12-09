@@ -817,14 +817,6 @@ def main():
         show_mesonet = st.checkbox("Mesonet", value=True)
         show_usgs = st.checkbox("USGS River Gauges", value=True)
         
-        st.header("Settings")
-        year = st.selectbox("Year", ["2025", "2024", "2023"], index=0)
-        selected_measurement = st.selectbox(
-            "Display Measurement",
-            ["WBGT", "Temperature", "Dewpoint"],
-            index=0,
-            help="Select which measurement to display on the map markers"
-        )
         
         st.info("🔄 Auto-refreshing every 5 minutes")
         # Always run auto-refresh every 5 minutes (300 seconds = 300000 milliseconds)
