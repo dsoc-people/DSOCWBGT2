@@ -227,17 +227,19 @@ def process_mesonet_station(station_id, year, station_coords):
 
         wbgt_f = wbgt(tair_f, wspd_mph, srad, pres_inhg, dwpt_f)
 
-        return {
+        # Explicitly return with all required columns
+        result = {
             "name": station_id,
             "latitude": lat,
             "longitude": lon,
             "wbgt_f": wbgt_f,
-            "Temperature (°F)": tair_f,
-            "Dewpoint (°F)": dwpt_f,
-            "Wind Speed (mph)": wspd_mph,
+            "Temperature (°F)": float(tair_f) if not pd.isna(tair_f) else None,
+            "Dewpoint (°F)": float(dwpt_f) if not pd.isna(dwpt_f) else None,
+            "Wind Speed (mph)": float(wspd_mph) if not pd.isna(wspd_mph) else None,
             "observation_time": obs_time,
             "source": "Mesonet",
         }
+        return result
 
     except Exception:
         # Always return a row even on error, matching the provided code
@@ -793,7 +795,12 @@ def main():
         if show_whitesquirrel:
             df_whitesquirrel = fetch_weatherstem_data()
             df_whitesquirrel = geocode_stations(df_whitesquirrel)
-            df_whitesquirrel = df_whitesquirrel.rename(columns={"WBGT (°F)": "wbgt_f", "Site": "name"})
+            # Rename columns to match Mesonet structure
+            df_whitesquirrel = df_whitesquirrel.rename(columns={
+                "WBGT (°F)": "wbgt_f", 
+                "Site": "name",
+                "Observation Time": "observation_time"
+            })
             # Ensure source is explicitly set
             df_whitesquirrel['source'] = 'White Squirrel Weather'
         else:
@@ -804,6 +811,12 @@ def main():
             station_coords, station_abbreviations = get_station_coordinates()
             df_mesonet = fetch_mesonet_data(year, station_coords, station_abbreviations)
             # Source is already set in process_mesonet_station function
+            # Verify Temperature and Dewpoint columns exist
+            if not df_mesonet.empty:
+                if "Temperature (°F)" not in df_mesonet.columns:
+                    st.error("❌ Mesonet dataframe missing 'Temperature (°F)' column!")
+                if "Dewpoint (°F)" not in df_mesonet.columns:
+                    st.error("❌ Mesonet dataframe missing 'Dewpoint (°F)' column!")
         else:
             df_mesonet = pd.DataFrame()
 
@@ -932,8 +945,37 @@ def main():
         if not combined_df.empty:
             st.write("Sources in combined dataframe:")
             st.write(combined_df['source'].value_counts())
-            st.write("Sample rows:")
-            st.dataframe(combined_df[['name', 'source', 'wbgt_f']].head(10))
+            st.write("**All columns in combined dataframe:**")
+            st.write(list(combined_df.columns))
+            st.write("**Sample rows from combined dataframe:**")
+            st.dataframe(combined_df.head(10))
+        
+        st.subheader("Mesonet Data Debug")
+        if not df_mesonet.empty:
+            st.write("**Mesonet dataframe columns:**")
+            st.write(list(df_mesonet.columns))
+            st.write("**Mesonet dataframe shape:**")
+            st.write(df_mesonet.shape)
+            st.write("**Sample Mesonet rows:**")
+            st.dataframe(df_mesonet.head(10))
+            st.write("**Checking for Temperature and Dewpoint columns:**")
+            st.write(f"Has 'Temperature (°F)': {'Temperature (°F)' in df_mesonet.columns}")
+            st.write(f"Has 'Dewpoint (°F)': {'Dewpoint (°F)' in df_mesonet.columns}")
+            if 'Temperature (°F)' in df_mesonet.columns:
+                st.write("**Temperature values:**")
+                st.write(df_mesonet['Temperature (°F)'].head(10))
+            if 'Dewpoint (°F)' in df_mesonet.columns:
+                st.write("**Dewpoint values:**")
+                st.write(df_mesonet['Dewpoint (°F)'].head(10))
+        else:
+            st.write("Mesonet dataframe is empty")
+        
+        st.subheader("White Squirrel Weather Data Debug")
+        if not df_whitesquirrel.empty:
+            st.write("**White Squirrel dataframe columns:**")
+            st.write(list(df_whitesquirrel.columns))
+            st.write("**Sample White Squirrel rows:**")
+            st.dataframe(df_whitesquirrel.head(5))
 
 if __name__ == "__main__":
     main()
