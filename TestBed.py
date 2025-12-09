@@ -194,86 +194,75 @@ def fetch_usgs_data():
 
 @st.cache_data(ttl=300)
 def process_mesonet_station(station_id, year, station_coords):
-    """Process a single Mesonet station and calculate WBGT"""
+    """Process a single Mesonet station and calculate WBGT - always returns a row"""
+    lat, lon = station_coords.get(station_id, (None, None))
+    
     try:
-        if station_id == "WKUCHAOS":
-            data_url = "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wkuchaos/latest.json"
-            response = requests.get(data_url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            if 'observations' in data and isinstance(data['observations'], list):
-                latest_observation = data['observations'][-1] if data['observations'] else {}
-                tair_c = latest_observation.get('air_temperature_c')
-                dwpt_c = latest_observation.get('dew_point_temperature_c')
-                wspd_mps = latest_observation.get('wind_speed_mps')
-                srad = latest_observation.get('solar_radiation_w_m2')
-                pres_hpa = latest_observation.get('pressure_hpa')
-                observation_time = latest_observation.get('timestamp_utc')
-                pres_inhg = pres_hpa * 0.02953 if pres_hpa is not None else np.nan
-            else:
-                return None
-        else:
-            manifest_url = f"https://d266k7wxhw6o23.cloudfront.net/data/{station_id}/{year}/manifest.json"
-            manifest = requests.get(manifest_url, timeout=10).json()
-            latest_day = max(manifest.keys())
-            latest_key = manifest[latest_day]["key"]
-            data_url = f"https://d266k7wxhw6o23.cloudfront.net/{latest_key}"
-            response = requests.get(data_url, timeout=10)
-            response.raise_for_status()
-            data = response.json()
-            df = pd.DataFrame(data['rows'], columns=data['columns'])
-            required_columns = ["TAIR", "DWPT", "WSPD", "SRAD", "PRES", "UTCTimestampCollected"]
-            if not all(col in df.columns for col in required_columns):
-                return None
+        manifest_url = f"https://d266k7wxhw6o23.cloudfront.net/data/{station_id}/{year}/manifest.json"
+        manifest = requests.get(manifest_url, timeout=15).json()
+        if not manifest:
+            raise ValueError("Empty manifest")
 
-            # Use dropna().iloc[-1] approach for more robust data extraction
-            try:
-                tair_c = df["TAIR"].dropna().iloc[-1]
-                dwpt_c = df["DWPT"].dropna().iloc[-1]
-                wspd_mps = df["WSPD"].dropna().iloc[-1]
-                srad = df["SRAD"].dropna().iloc[-1]
-                pres_hpa = df["PRES"].dropna().iloc[-1]
-                pres_inhg = pres_hpa * 0.02953
-                observation_time = df["UTCTimestampCollected"].dropna().iloc[-1]
-            except (IndexError, KeyError):
-                return None
+        latest_day = max(manifest.keys())
+        key = manifest[latest_day]["key"]
+        data = requests.get(
+            f"https://d266k7wxhw6o23.cloudfront.net/{key}",
+            timeout=15
+        ).json()
+        df = pd.DataFrame(data["rows"], columns=data["columns"])
+        cols = ["TAIR", "DWPT", "WSPD", "SRAD", "PRES", "UTCTimestampCollected"]
+        if not all(c in df.columns for c in cols):
+            raise ValueError("Missing required columns")
 
-        tair_f = celsius_to_farenheit(tair_c) if tair_c is not None and not np.isnan(tair_c) else np.nan
-        dwpt_f = celsius_to_farenheit(dwpt_c) if dwpt_c is not None and not np.isnan(dwpt_c) else np.nan
-        wspd_mph = wspd_mps * 2.23694 if wspd_mps is not None and not np.isnan(wspd_mps) else np.nan
+        # Use the exact approach from the working code
+        tair_c, dwpt_c, wspd_mps, srad, pres_hpa = [
+            df[c].dropna().iloc[-1] for c in cols[:-1]
+        ]
+        pres_inhg = pres_hpa * 0.02953
+        obs_time = df["UTCTimestampCollected"].dropna().iloc[-1]
 
-        wbgt_f = np.nan
-        if not np.isnan(tair_f) and not np.isnan(wspd_mph) and not np.isnan(srad) and not np.isnan(pres_inhg) and not np.isnan(dwpt_f):
-            wbgt_f = wbgt(tair_f, wspd_mph, srad, pres_inhg, dwpt_f)
-        else:
-            return None
+        tair_f = celsius_to_farenheit(tair_c)
+        dwpt_f = celsius_to_farenheit(dwpt_c)
+        wspd_mph = wspd_mps * 2.23694
 
-        latitude, longitude = station_coords.get(station_id, (None, None))
+        wbgt_f = wbgt(tair_f, wspd_mph, srad, pres_inhg, dwpt_f)
 
         return {
             "name": station_id,
-            "latitude": latitude,
-            "longitude": longitude,
+            "latitude": lat,
+            "longitude": lon,
             "wbgt_f": wbgt_f,
             "Temperature (°F)": tair_f,
             "Dewpoint (°F)": dwpt_f,
-            "observation_time": observation_time,
-            "source": "Mesonet"  # Explicitly set source for Mesonet stations
+            "Wind Speed (mph)": wspd_mph,
+            "observation_time": obs_time,
+            "source": "Mesonet",
         }
 
-    except Exception as e:
-        return None
+    except Exception:
+        # Always return a row even on error, matching the provided code
+        return {
+            "name": station_id,
+            "latitude": lat,
+            "longitude": lon,
+            "wbgt_f": None,
+            "Temperature (°F)": None,
+            "Dewpoint (°F)": None,
+            "Wind Speed (mph)": None,
+            "observation_time": "Error",
+            "source": "Mesonet",
+        }
 
 @st.cache_data(ttl=300)
 def fetch_mesonet_data(year, station_coords, station_abbreviations):
-    """Fetch and process all Mesonet stations"""
-    wbgt_results = []
+    """Fetch and process all Mesonet stations - always returns rows even on error"""
+    mesonet_data_rows = []
     for station_id in station_abbreviations:
         station_data = process_mesonet_station(station_id, year, station_coords)
-        if station_data:
-            wbgt_results.append(station_data)
+        # Always append - function now always returns a row
+        mesonet_data_rows.append(station_data)
     
-    return pd.DataFrame(wbgt_results)
+    return pd.DataFrame(mesonet_data_rows)
 
 def get_station_coordinates():
     """Parse station coordinates from text"""
@@ -814,9 +803,7 @@ def main():
         if show_mesonet:
             station_coords, station_abbreviations = get_station_coordinates()
             df_mesonet = fetch_mesonet_data(year, station_coords, station_abbreviations)
-            # Ensure source is explicitly set
-            if not df_mesonet.empty:
-                df_mesonet['source'] = 'Mesonet'
+            # Source is already set in process_mesonet_station function
         else:
             df_mesonet = pd.DataFrame()
 
