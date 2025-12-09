@@ -8,10 +8,8 @@ import requests
 import pandas as pd
 import numpy as np
 import folium
-from folium.plugins import FloatImage
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
-import math
 from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 import base64
@@ -120,7 +118,7 @@ def fetch_weatherstem_data():
 
             wbgt_val = extract_value(records, "Wet Bulb Globe Temperature")
 
-            # More robust temperature / dewpoint / wind extraction
+            # Robust temperature / dewpoint / wind extraction
             temp = extract_value(records, "Thermometer")
             if temp is None:
                 temp = extract_value(records, "Temperature")
@@ -142,7 +140,7 @@ def fetch_weatherstem_data():
                 "Temperature (°F)": temp,
                 "Dewpoint (°F)": dewpt,
                 "Wind Speed (mph)": wind,
-                "source": "White Squirrel Weather"  # Explicitly set source
+                "source": "White Squirrel Weather"
             })
 
         except Exception as e:
@@ -153,18 +151,18 @@ def fetch_weatherstem_data():
                 "Temperature (°F)": None,
                 "Dewpoint (°F)": None,
                 "Wind Speed (mph)": None,
-                "source": "White Squirrel Weather"  # Explicitly set source even on error
+                "source": "White Squirrel Weather"
             })
             st.warning(f"Error fetching data from {site}: {e}")
 
     df = pd.DataFrame(data)
-    return df[["Site", "Observation Time", "WBGT (°F)", "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)", "source"]]
+    return df[["Site", "Observation Time", "WBGT (°F)", "Temperature (°F)",
+               "Dewpoint (°F)", "Wind Speed (mph)", "source"]]
 
 @st.cache_data(ttl=300)
 def fetch_usgs_data():
     """Fetch data from USGS river gauges"""
     usgs_iv_ky_url = 'https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=ky&siteStatus=active'
-    
     try:
         response = requests.get(usgs_iv_ky_url, timeout=10)
         response.raise_for_status()
@@ -232,14 +230,12 @@ def process_mesonet_station(station_id, year, station_coords):
         if not all(c in df.columns for c in cols):
             raise ValueError("Missing required columns")
 
-        # Use the exact approach from the working code
         tair_c, dwpt_c, wspd_mps, srad, pres_hpa = [
             df[c].dropna().iloc[-1] for c in cols[:-1]
         ]
         pres_inhg = pres_hpa * 0.02953
         obs_time = df["UTCTimestampCollected"].dropna().iloc[-1]
 
-        # Calculate WBGT using the same approach as working code
         wbgt_f_val = wbgt(
             celsius_to_farenheit(tair_c),
             wspd_mps * 2.23694,
@@ -248,7 +244,6 @@ def process_mesonet_station(station_id, year, station_coords):
             celsius_to_farenheit(dwpt_c),
         )
 
-        # Return with exact same structure as working code
         return {
             "name": station_id,
             "latitude": lat,
@@ -262,11 +257,8 @@ def process_mesonet_station(station_id, year, station_coords):
         }
 
     except Exception as e:
-        import traceback
-        error_msg = str(e)
-        # Only show first error to avoid spam
         if not hasattr(process_mesonet_station, '_error_shown'):
-            st.warning(f"Error processing Mesonet station {station_id}: {error_msg}")
+            st.warning(f"Error processing Mesonet station {station_id}: {e}")
             process_mesonet_station._error_shown = True
         
         return {
@@ -517,7 +509,7 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
 
     m = folium.Map(location=center, zoom_start=8, control_scale=True)
 
-    # Add tile layers
+    # Base layers
     folium.TileLayer(
         tiles="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
         attr='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; OpenStreetMap contributors',
@@ -567,9 +559,9 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
     weather_layer.add_to(m)
     usgs_layer.add_to(m)
 
-    # Add markers for weather data
+    # Weather markers
     if not combined_df.empty:
-        for index, row in combined_df.iterrows():
+        for _, row in combined_df.iterrows():
             wbgt_val = row.get("wbgt_f")
             temp = row.get("Temperature (°F)")
             dew = row.get("Dewpoint (°F)")
@@ -582,7 +574,6 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
             if pd.isna(latitude) or pd.isna(longitude):
                 continue
 
-            # Determine color and value based on selected measurement
             if selected_measurement == "WBGT":
                 value = wbgt_val
                 color = wbgt_color(wbgt_val)
@@ -590,7 +581,6 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
                 value_unit = "°F"
             elif selected_measurement == "Temperature":
                 value = temp
-                # Still use WBGT for color coding if available
                 color = wbgt_color(wbgt_val) if pd.notna(wbgt_val) else "#808080"
                 value_label = "Temperature"
                 value_unit = "°F"
@@ -604,8 +594,6 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
                 color = wbgt_color(wbgt_val)
                 value_label = "WBGT"
                 value_unit = "°F"
-
-            radius = marker_radius()
 
             popup_html = f"""
             <div style="font-family:system-ui;min-width:220px">
@@ -622,10 +610,10 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
                 if pd.notna(value)
                 else f"{site}: {value_label} N/A"
             )
-            
+
             marker = folium.CircleMarker(
                 location=[latitude, longitude],
-                radius=radius,
+                radius=marker_radius(),
                 popup=folium.Popup(popup_html, max_width=280),
                 tooltip=tooltip_text,
                 color=color,
@@ -634,10 +622,9 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
                 fill_opacity=0.8,
                 weight=1,
             )
-
             marker.add_to(weather_layer)
 
-    # Add USGS river gauge markers
+    # USGS markers
     if not ky_sites_df.empty:
         for site_id in ky_sites_df['Site ID'].unique():
             site_rows = ky_sites_df[ky_sites_df['Site ID'] == site_id]
@@ -650,7 +637,7 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
             popup_html = f"<div style='font-family:system-ui;min-width:220px'><h4 style='margin:0 0 6px 0'>{site_name}</h4>"
             popup_html += f"<div><b>Site ID:</b> {site_id}</div>"
 
-            for idx, row in site_rows.iterrows():
+            for _, row in site_rows.iterrows():
                 param_name = row['Parameter Name']
                 latest_value = row['Latest Value']
                 value_unit = row['Value Unit']
@@ -666,7 +653,7 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
                 icon=folium.Icon(color='blue', icon='tint', prefix='fa')
             ).add_to(usgs_layer)
 
-    # Add legend
+    # Legend
     legend_html = f"""
     <div style="
         position: fixed;
@@ -702,46 +689,17 @@ def upload_map_to_github(map_filename):
         
         try:
             github_token = st.secrets.get("GITHUB_TOKEN", None)
-        except:
+        except Exception:
             github_token = None
         
         if not github_token:
             github_token = os.getenv("GITHUB_TOKEN")
         
         if not github_token:
-            import subprocess
-            try:
-                result = subprocess.run(
-                    ["git", "remote", "get-url", "origin"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if result.returncode == 0:
-                    subprocess.run(["git", "add", map_filename], check=False, timeout=5)
-                    commit_result = subprocess.run(
-                        ["git", "commit", "-m", "Update WBGT map", map_filename],
-                        capture_output=True,
-                        text=True,
-                        timeout=5
-                    )
-                    push_result = subprocess.run(
-                        ["git", "push"],
-                        capture_output=True,
-                        text=True,
-                        timeout=10
-                    )
-                    if push_result.returncode == 0:
-                        return {
-                            "success": True,
-                            "method": "git",
-                            "url": f"https://github.com/{repo_owner}/{repo_name}/blob/main/{file_path}"
-                        }
-            except Exception as git_error:
-                return {
-                    "success": False,
-                    "error": f"GITHUB_TOKEN not set and git push failed: {str(git_error)}"
-                }
+            return {
+                "success": False,
+                "error": "GITHUB_TOKEN not set; skipping upload."
+            }
         
         import requests
         
@@ -755,9 +713,7 @@ def upload_map_to_github(map_filename):
         sha = None
         if response.status_code == 200:
             sha = response.json().get("sha")
-        elif response.status_code == 404:
-            pass
-        else:
+        elif response.status_code != 404:
             return {
                 "success": False,
                 "error": f"GitHub API error checking file: {response.status_code} - {response.text}"
@@ -798,18 +754,30 @@ def main():
     st.title("🌡️ Multi-Source Weather Station WBGT Monitor")
     st.markdown("**Wet Bulb Globe Temperature (WBGT) monitoring from multiple data sources**")
 
+    # Session state for lazy Mesonet loading
+    if "load_mesonet" not in st.session_state:
+        st.session_state["load_mesonet"] = False
+
     # Sidebar controls
     with st.sidebar:
         st.header("Data Sources")
         show_whitesquirrel = st.checkbox("White Squirrel Weather", value=True)
-        show_mesonet = st.checkbox("Mesonet", value=True)
+        show_mesonet = st.checkbox("Mesonet (slower)", value=True)
         show_usgs = st.checkbox("USGS River Gauges", value=False)
+
+        if show_mesonet:
+            st.caption("Mesonet data can take a while to load.")
+            if not st.session_state["load_mesonet"]:
+                if st.button("Load Mesonet data (once)"):
+                    st.session_state["load_mesonet"] = True
+                    st.rerun()
+            else:
+                st.caption("Mesonet data is enabled (cached for 5 minutes).")
 
         upload_to_github = st.checkbox("Upload latest map to GitHub", value=False)
         
         st.info("🔄 Auto-refreshing every 5 minutes")
-        # Auto-refresh every 5 minutes; let cache TTLs control refetch
-        count = st_autorefresh(interval=300000, limit=None, key="weather_refresh")
+        st_autorefresh(interval=300000, limit=None, key="weather_refresh")
 
     # Measurement selector
     selected_measurement = st.radio(
@@ -819,42 +787,33 @@ def main():
         horizontal=True,
     )
 
-    # Fetch data
-    with st.spinner("Fetching weather data..."):
-        # Fetch White Squirrel Weather data
-        if show_whitesquirrel:
-            df_whitesquirrel = fetch_weatherstem_data()
-            df_whitesquirrel = geocode_stations(df_whitesquirrel)
-            # Rename columns to match Mesonet structure
-            df_whitesquirrel = df_whitesquirrel.rename(columns={
-                "WBGT (°F)": "wbgt_f", 
-                "Site": "name",
-                "Observation Time": "observation_time"
-            })
-            df_whitesquirrel['source'] = 'White Squirrel Weather'
-        else:
-            df_whitesquirrel = pd.DataFrame()
+    # --- Fetch data (fast sources first, no global spinner) ---
+    if show_whitesquirrel:
+        df_whitesquirrel = fetch_weatherstem_data()
+        df_whitesquirrel = geocode_stations(df_whitesquirrel)
+        df_whitesquirrel = df_whitesquirrel.rename(columns={
+            "WBGT (°F)": "wbgt_f", 
+            "Site": "name",
+            "Observation Time": "observation_time"
+        })
+        df_whitesquirrel['source'] = 'White Squirrel Weather'
+    else:
+        df_whitesquirrel = pd.DataFrame()
 
-        # Fetch Mesonet data
-        if show_mesonet:
-            station_coords, station_abbreviations = get_station_coordinates()
-            year = datetime.utcnow().year
+    if show_usgs:
+        ky_sites_df = fetch_usgs_data()
+    else:
+        ky_sites_df = pd.DataFrame()
+
+    # Mesonet is optional & lazy
+    df_mesonet = pd.DataFrame()
+    if show_mesonet and st.session_state["load_mesonet"]:
+        station_coords, station_abbreviations = get_station_coordinates()
+        year = datetime.utcnow().year
+        with st.spinner("Loading Mesonet data..."):
             df_mesonet = fetch_mesonet_data(year, station_coords, station_abbreviations)
-            if not df_mesonet.empty:
-                if "Temperature (°F)" not in df_mesonet.columns:
-                    st.error(f"❌ Mesonet dataframe missing 'Temperature (°F)' column! Columns: {list(df_mesonet.columns)}")
-                if "Dewpoint (°F)" not in df_mesonet.columns:
-                    st.error(f"❌ Mesonet dataframe missing 'Dewpoint (°F)' column! Columns: {list(df_mesonet.columns)}")
-        else:
-            df_mesonet = pd.DataFrame()
 
-        # Fetch USGS data
-        if show_usgs:
-            ky_sites_df = fetch_usgs_data()
-        else:
-            ky_sites_df = pd.DataFrame()
-
-    # Combine dataframes based on selected sources
+    # --- Combine dataframes ---
     dfs_to_combine = []
     if show_whitesquirrel and not df_whitesquirrel.empty:
         dfs_to_combine.append(df_whitesquirrel.copy())
@@ -876,8 +835,14 @@ def main():
         combined_df = dfs_to_combine[0].copy()
     else:
         combined_df = pd.DataFrame()
-    
-    # Display data summary
+
+    # Ensure temp/dew columns exist
+    if not combined_df.empty:
+        for col in ["Temperature (°F)", "Dewpoint (°F)"]:
+            if col not in combined_df.columns:
+                combined_df[col] = np.nan
+
+    # --- Summary metrics ---
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("White Squirrel Weather Stations", len(df_whitesquirrel) if not df_whitesquirrel.empty else 0)
@@ -900,7 +865,7 @@ def main():
             if not df_mesonet.empty:
                 st.dataframe(df_mesonet, use_container_width=True)
             else:
-                st.info("No Mesonet data available.")
+                st.info("Mesonet not loaded yet or returned no data.")
         
         with tab3:
             if not ky_sites_df.empty:
@@ -908,83 +873,28 @@ def main():
             else:
                 st.info("No USGS data available.")
 
-    # Optional quick debug to verify temps
+    # Optional quick debug
     if not combined_df.empty and st.checkbox("Show Temperature Debug Sample"):
         st.write(combined_df[["name", "wbgt_f", "Temperature (°F)", "Dewpoint (°F)"]].head(10))
 
-    # Create and display map
+    # --- Map ---
     if not combined_df.empty or not ky_sites_df.empty:
         st.subheader("Interactive Map")
         m = create_map(combined_df, ky_sites_df, selected_measurement)
         
-        # Save map to local file
         map_filename = "wbgt_map.html"
         m.save(map_filename)
         
-        # Upload to GitHub only if requested
         if upload_to_github:
             upload_status = upload_map_to_github(map_filename)
             if upload_status.get("success"):
                 st.success(f"✅ Map uploaded to GitHub: {upload_status.get('url', '')}")
             else:
                 st.warning(f"⚠️ Could not upload map to GitHub: {upload_status.get('error', 'Unknown error')}")
-                with st.expander("Setup Instructions"):
-                    st.markdown("""
-                    **To enable GitHub upload:**
-                    
-                    1. **Create a GitHub Personal Access Token:**
-                       - Go to https://github.com/settings/tokens
-                       - Click "Generate new token (classic)"
-                       - Give it a name like "WBGT Map Upload"
-                       - Select scope: `repo`
-                       - Click "Generate token"
-                       - Copy the token immediately.
-                    
-                    2. **Set the token as an environment variable:**
-                       ```bash
-                       export GITHUB_TOKEN="YOUR_TOKEN_HERE"
-                       ```
-                    
-                    3. **Or set it in your Streamlit secrets (`.streamlit/secrets.toml`):**
-                       ```toml
-                       GITHUB_TOKEN = "YOUR_TOKEN_HERE"
-                       ```
-                    
-                    4. **Restart your Streamlit app**
-                    """)
-        
+
         st_folium(m, width=None, height=600)
     else:
         st.warning("No data available to display on map. Please enable at least one data source.")
-
-    # Debug info (optional)
-    if st.checkbox("Show Debug Info"):
-        st.subheader("Source Verification")
-        if not combined_df.empty:
-            st.write("Sources in combined dataframe:")
-            st.write(combined_df['source'].value_counts())
-            st.write("**All columns in combined dataframe:**")
-            st.write(list(combined_df.columns))
-            st.write("**Sample rows from combined dataframe:**")
-            st.dataframe(combined_df.head(10))
-        
-        st.subheader("Mesonet Data Debug")
-        if not df_mesonet.empty:
-            st.write("**Mesonet dataframe columns:**")
-            st.write(list(df_mesonet.columns))
-            st.write("**Mesonet dataframe shape:**")
-            st.write(df_mesonet.shape)
-            st.write("**Sample Mesonet rows:**")
-            st.dataframe(df_mesonet.head(10))
-        else:
-            st.write("Mesonet dataframe is empty")
-        
-        st.subheader("White Squirrel Weather Data Debug")
-        if not df_whitesquirrel.empty:
-            st.write("**White Squirrel dataframe columns:**")
-            st.write(list(df_whitesquirrel.columns))
-            st.write("**Sample White Squirrel rows:**")
-            st.dataframe(df_whitesquirrel.head(5))
 
 if __name__ == "__main__":
     main()
