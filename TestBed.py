@@ -14,6 +14,8 @@ from geopy.extra.rate_limiter import RateLimiter
 import math
 from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
+import base64
+import os
 
 # Page configuration
 st.set_page_config(
@@ -463,15 +465,11 @@ def wbgt_color(w):
     else:
         return "#800026"
 
-def marker_radius(wind):
-    """Marker size function"""
-    try:
-        r = 6 + 1.2 * float(wind)
-    except:
-        r = 8
-    return max(6, min(18, r))
+def marker_radius():
+    """Marker size function - fixed size for all markers"""
+    return 10  # Fixed size for all markers
 
-def create_map(combined_df, ky_sites_df):
+def create_map(combined_df, ky_sites_df, selected_measurement):
     """Create the interactive Folium map"""
     # Calculate center
     all_lats = []
@@ -541,49 +539,68 @@ def create_map(combined_df, ky_sites_df):
         control=True
     ).add_to(m)
 
-    # Create layer groups - IMPORTANT: Separate by source
-    mesonet_layer = folium.FeatureGroup(name='Mesonet Data')
-    whitesquirrel_layer = folium.FeatureGroup(name='White Squirrel Weather Data')
+    # Create a single layer group (no layer control - using sidebar checkboxes instead)
+    weather_layer = folium.FeatureGroup(name='Weather Stations')
     usgs_layer = folium.FeatureGroup(name='USGS River Gauges')
-    mesonet_layer.add_to(m)
-    whitesquirrel_layer.add_to(m)
+    weather_layer.add_to(m)
     usgs_layer.add_to(m)
 
-    # Add markers for weather data - CRITICAL: Check source before adding
+    # Add markers for weather data
     if not combined_df.empty:
         for index, row in combined_df.iterrows():
             wbgt = row.get("wbgt_f")
             temp = row.get("Temperature (°F)")
             dew = row.get("Dewpoint (°F)")
-            wind = row.get("Wind Speed (mph)")
             site = row.get("name") if "name" in row else row.get("Site")
             obs_time = row.get("observation_time") if "observation_time" in row else row.get("Observation Time")
-            source = row.get("source")  # Get the source from the row
+            source = row.get("source")
             latitude = row.get("latitude")
             longitude = row.get("longitude")
 
             if pd.isna(latitude) or pd.isna(longitude):
                 continue
 
-            color = wbgt_color(wbgt)
-            radius = marker_radius(wind)
+            # Determine color and value based on selected measurement
+            if selected_measurement == "WBGT":
+                value = wbgt
+                color = wbgt_color(wbgt)
+                value_label = "WBGT"
+                value_unit = "°F"
+            elif selected_measurement == "Temperature":
+                value = temp
+                color = wbgt_color(wbgt) if pd.notna(wbgt) else "#808080"  # Still use WBGT for color coding
+                value_label = "Temperature"
+                value_unit = "°F"
+            elif selected_measurement == "Dewpoint":
+                value = dew
+                color = wbgt_color(wbgt) if pd.notna(wbgt) else "#808080"  # Still use WBGT for color coding
+                value_label = "Dewpoint"
+                value_unit = "°F"
+            else:
+                value = wbgt
+                color = wbgt_color(wbgt)
+                value_label = "WBGT"
+                value_unit = "°F"
+
+            radius = marker_radius()
 
             popup_html = f"""
             <div style="font-family:system-ui;min-width:220px">
               <h4 style="margin:0 0 6px 0">{site} ({source})</h4>
               <div><b>Observed:</b> {obs_time if pd.notna(obs_time) else 'N/A'}</div>
               <div><b>WBGT:</b> {f'{wbgt:.1f} °F' if pd.notna(wbgt) else 'N/A'}</div>
-              <div><b>Temp:</b> {f'{temp:.1f} °F' if pd.notna(temp) else 'N/A'}</div>
+              <div><b>Temperature:</b> {f'{temp:.1f} °F' if pd.notna(temp) else 'N/A'}</div>
               <div><b>Dewpoint:</b> {f'{dew:.1f} °F' if pd.notna(dew) else 'N/A'}</div>
-              <div><b>Wind:</b> {f'{wind} mph' if pd.notna(wind) else 'N/A'}</div>
             </div>
             """
 
+            tooltip_text = f"{site}: {value_label} {value:.1f}{value_unit}" if pd.notna(value) else f"{site}: {value_label} N/A"
+            
             marker = folium.CircleMarker(
                 location=[latitude, longitude],
                 radius=radius,
                 popup=folium.Popup(popup_html, max_width=280),
-                tooltip=f"{site}: WBGT {wbgt:.1f}°F ({source})" if pd.notna(wbgt) else f"{site}: WBGT N/A ({source})",
+                tooltip=tooltip_text,
                 color=color,
                 fill=True,
                 fill_color=color,
@@ -591,14 +608,7 @@ def create_map(combined_df, ky_sites_df):
                 weight=1,
             )
 
-            # CRITICAL FIX: Check source string exactly
-            if source == 'Mesonet':
-                marker.add_to(mesonet_layer)
-            elif source == 'White Squirrel Weather':
-                marker.add_to(whitesquirrel_layer)
-            else:
-                # Fallback: add to appropriate layer based on source
-                marker.add_to(whitesquirrel_layer)
+            marker.add_to(weather_layer)
 
     # Add USGS river gauge markers
     if not ky_sites_df.empty:
@@ -629,29 +639,104 @@ def create_map(combined_df, ky_sites_df):
                 icon=folium.Icon(color='blue', icon='tint', prefix='fa')
             ).add_to(usgs_layer)
 
-    # Add layer control
-    folium.LayerControl(position="topright", collapsed=False).add_to(m)
+    # No layer control - using sidebar checkboxes instead
 
     # Add legend
-    legend_html = """
+    legend_html = f"""
     <div style="
         position: fixed;
         bottom: 30px; left: 30px; z-index: 9999;
         background: white; padding: 10px 12px;
         border: 1px solid #ccc; border-radius: 8px;
         font-family: system-ui; font-size: 12px;">
-      <div style="font-weight:600; margin-bottom:6px;">WBGT (°F)</div>
+      <div style="font-weight:600; margin-bottom:6px;">WBGT (°F) Color Scale</div>
       <div><span style="display:inline-block;width:12px;height:12px;background:#2ca02c;margin-right:6px;border:1px solid #999;"></span><60</div>
       <div><span style="display:inline-block;width:12px;height:12px;background:#ff7f0e;margin-right:6px;border:1px solid #999;"></span>60–69.9</div>
       <div><span style="display:inline-block;width:12px;height:12px;background:#d62728;margin-right:6px;border:1px solid #999;"></span>70–79.9</div>
       <div><span style="display:inline-block;width:12px;height:12px;background:#800026;margin-right:6px;border:1px solid #999;"></span>≥80</div>
       <div><span style="display:inline-block;width:12px;height:12px;background:#808080;margin-right:6px;border:1px solid #999;"></span>N/A</div>
-      <div style="margin-top:6px;"><em>Marker size scales with wind speed.</em></div>
+      <div style="margin-top:6px;"><em>Displaying: {selected_measurement}</em></div>
     </div>
     """
     m.get_root().html.add_child(folium.Element(legend_html))
 
     return m
+
+def upload_map_to_github(map_filename):
+    """Upload map HTML file to GitHub repository"""
+    try:
+        # Read the map file
+        with open(map_filename, 'r', encoding='utf-8') as f:
+            map_content = f.read()
+        
+        # GitHub repository details
+        repo_owner = "dsoc-people"
+        repo_name = "DSOCWBGT2"
+        file_path = "Image storage/wbgt_map.html"  # Path in GitHub repo
+        github_token = os.getenv("GITHUB_TOKEN")
+        
+        if not github_token:
+            # Try to use git command as fallback
+            import subprocess
+            try:
+                # Check if we're in a git repo
+                result = subprocess.run(
+                    ["git", "remote", "get-url", "origin"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if result.returncode == 0:
+                    # Use git to commit and push
+                    subprocess.run(["git", "add", map_filename], check=False, timeout=5)
+                    subprocess.run(
+                        ["git", "commit", "-m", "Update WBGT map", map_filename],
+                        check=False,
+                        timeout=5
+                    )
+                    subprocess.run(["git", "push"], check=False, timeout=10)
+                    return
+            except Exception:
+                pass
+            
+            raise Exception("GITHUB_TOKEN environment variable not set. Please set it in your environment or use git commands.")
+        
+        # Use GitHub API
+        import requests
+        
+        # Get the file SHA if it exists
+        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}"
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        # Check if file exists
+        response = requests.get(url, headers=headers, timeout=10)
+        sha = None
+        if response.status_code == 200:
+            sha = response.json().get("sha")
+        
+        # Encode content
+        content_encoded = base64.b64encode(map_content.encode('utf-8')).decode('utf-8')
+        
+        # Prepare data
+        data = {
+            "message": "Update WBGT map",
+            "content": content_encoded,
+            "branch": "main"
+        }
+        if sha:
+            data["sha"] = sha
+        
+        # Upload file
+        response = requests.put(url, json=data, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+    except Exception as e:
+        # If GitHub upload fails, just log it - don't break the app
+        print(f"GitHub upload error: {e}")
+        raise
 
 # Main Streamlit app
 def main():
@@ -667,6 +752,12 @@ def main():
         
         st.header("Settings")
         year = st.selectbox("Year", ["2025", "2024", "2023"], index=0)
+        selected_measurement = st.selectbox(
+            "Display Measurement",
+            ["WBGT", "Temperature", "Dewpoint"],
+            index=0,
+            help="Select which measurement to display on the map markers"
+        )
         
         st.header("Auto-Refresh")
         auto_refresh_enabled = st.checkbox("Enable Auto-Refresh", value=False)
@@ -710,24 +801,33 @@ def main():
         else:
             ky_sites_df = pd.DataFrame()
 
-    # Combine dataframes
-    if not df_mesonet.empty and not df_whitesquirrel.empty:
+    # Combine dataframes based on selected sources
+    dfs_to_combine = []
+    if show_whitesquirrel and not df_whitesquirrel.empty:
+        dfs_to_combine.append(df_whitesquirrel.copy())
+    if show_mesonet and not df_mesonet.empty:
+        dfs_to_combine.append(df_mesonet.copy())
+    
+    if len(dfs_to_combine) > 1:
         # Align columns
-        all_columns = list(set(df_mesonet.columns.tolist() + df_whitesquirrel.columns.tolist()))
-        for col in all_columns:
-            if col not in df_mesonet.columns:
-                df_mesonet[col] = None
-            if col not in df_whitesquirrel.columns:
-                df_whitesquirrel[col] = None
-        df_mesonet = df_mesonet[all_columns]
-        df_whitesquirrel = df_whitesquirrel[all_columns]
-        combined_df = pd.concat([df_mesonet, df_whitesquirrel], ignore_index=True)
-    elif not df_mesonet.empty:
-        combined_df = df_mesonet.copy()
-    elif not df_whitesquirrel.empty:
-        combined_df = df_whitesquirrel.copy()
+        all_columns = list(set([col for df in dfs_to_combine for col in df.columns.tolist()]))
+        aligned_dfs = []
+        for df in dfs_to_combine:
+            df_aligned = df.copy()
+            for col in all_columns:
+                if col not in df_aligned.columns:
+                    df_aligned[col] = None
+            df_aligned = df_aligned[all_columns]
+            aligned_dfs.append(df_aligned)
+        combined_df = pd.concat(aligned_dfs, ignore_index=True)
+    elif len(dfs_to_combine) == 1:
+        combined_df = dfs_to_combine[0].copy()
     else:
         combined_df = pd.DataFrame()
+    
+    # Filter USGS data based on checkbox
+    if not show_usgs:
+        ky_sites_df = pd.DataFrame()
 
     # Display data summary
     col1, col2, col3 = st.columns(3)
@@ -772,7 +872,18 @@ def main():
     # Create and display map
     if not combined_df.empty or not ky_sites_df.empty:
         st.subheader("Interactive Map")
-        m = create_map(combined_df, ky_sites_df)
+        m = create_map(combined_df, ky_sites_df, selected_measurement)
+        
+        # Save map to local file
+        map_filename = "wbgt_map.html"
+        m.save(map_filename)
+        
+        # Upload to GitHub
+        try:
+            upload_map_to_github(map_filename)
+        except Exception as e:
+            st.warning(f"Could not upload map to GitHub: {e}")
+        
         st_folium(m, width=None, height=600)
     else:
         st.warning("No data available to display on map. Please enable at least one data source.")
