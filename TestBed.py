@@ -3,6 +3,7 @@
 Multi-Source Weather Station Data Collection and Visualization
 Streamlit App for WBGT (Wet Bulb Globe Temperature) Monitoring
 """
+
 import streamlit as st
 import requests
 import pandas as pd
@@ -16,27 +17,34 @@ import base64
 import os
 from datetime import datetime
 
-# Page configuration
+# -----------------------------
+# Page Configuration
+# -----------------------------
 st.set_page_config(
     page_title="Multi-Source Weather Station WBGT Monitor",
     page_icon="🌡️",
     layout="wide"
 )
 
-# --- Helper functions for unit conversion ---
+# -----------------------------
+# Unit Conversions
+# -----------------------------
 def farenheit_to_celsius(temp_f):
     return (temp_f - 32) * 5 / 9
 
 def celsius_to_farenheit(temp_c):
     return temp_c * 9 / 5 + 32
 
-# --- Wet Bulb Temperature Calculation ---
+# -----------------------------
+# Wet Bulb Temperature Calculation
+# -----------------------------
 def dbdp2wb(tempC, dpC, p):
     return (tempC + dpC) / 2
 
-# --- Wet Bulb Globe Temperature Calculation ---
+# -----------------------------
+# WBGT Calculation
+# -----------------------------
 def wbgt(tempF, mph, rad, bar, dpF):
-    # Handle None values by converting to np.nan
     if tempF is None:
         tempF = np.nan
     if mph is None:
@@ -47,7 +55,7 @@ def wbgt(tempF, mph, rad, bar, dpF):
         bar = np.nan
     if dpF is None:
         dpF = np.nan
-    
+
     tempC = farenheit_to_celsius(tempF)
     mps = mph * 0.44704
     tempK = tempC + 273.15
@@ -74,16 +82,21 @@ def wbgt(tempF, mph, rad, bar, dpF):
     wbgt_f = celsius_to_farenheit(wbgt_c)
     return wbgt_f
 
-# --- Function to safely extract parameter value ---
+# -----------------------------
+# Extract a sensor value from WeatherSTEM
+# -----------------------------
 def extract_value(records, target):
     for r in records:
         if target.lower() in r.get("sensor_name", "").lower():
             return r.get("value")
     return None
 
-@st.cache_data(ttl=300)  # Cache for 5 minutes
+# -----------------------------
+# WeatherSTEM (White Squirrel) Fetch
+# -----------------------------
+@st.cache_data(ttl=300)
 def fetch_weatherstem_data():
-    """Fetch data from WeatherSTEM stations (White Squirrel Weather)"""
+
     urls = {
         "WKU": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wku/latest.json",
         "WKU Chaos": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/warren/wkuchaos/latest.json",
@@ -107,6 +120,7 @@ def fetch_weatherstem_data():
     }
 
     data = []
+
     for site, url in urls.items():
         try:
             response = requests.get(url, timeout=10)
@@ -118,7 +132,6 @@ def fetch_weatherstem_data():
 
             wbgt_val = extract_value(records, "Wet Bulb Globe Temperature")
 
-            # Robust temperature / dewpoint / wind extraction
             temp = extract_value(records, "Thermometer")
             if temp is None:
                 temp = extract_value(records, "Temperature")
@@ -143,7 +156,7 @@ def fetch_weatherstem_data():
                 "source": "White Squirrel Weather"
             })
 
-        except Exception as e:
+        except Exception:
             data.append({
                 "Site": site,
                 "Observation Time": "Error",
@@ -153,158 +166,60 @@ def fetch_weatherstem_data():
                 "Wind Speed (mph)": None,
                 "source": "White Squirrel Weather"
             })
-            st.warning(f"Error fetching data from {site}: {e}")
 
-    df = pd.DataFrame(data)
-    return df[["Site", "Observation Time", "WBGT (°F)", "Temperature (°F)",
-               "Dewpoint (°F)", "Wind Speed (mph)", "source"]]
+    return pd.DataFrame(data)
 
+# -----------------------------
+# USGS Fetch
+# -----------------------------
 @st.cache_data(ttl=300)
 def fetch_usgs_data():
-    """Fetch data from USGS river gauges"""
-    usgs_iv_ky_url = 'https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=ky&siteStatus=active'
+
+    usgs_url = 'https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=ky&siteStatus=active'
+
     try:
-        response = requests.get(usgs_iv_ky_url, timeout=10)
+        response = requests.get(usgs_url, timeout=10)
         response.raise_for_status()
-        ky_sites_iv_json = response.json()
-
-        site_data = []
-        if ky_sites_iv_json and 'value' in ky_sites_iv_json and 'timeSeries' in ky_sites_iv_json['value']:
-            for series in ky_sites_iv_json['value']['timeSeries']:
-                site_info = series['sourceInfo']
-                variable_info = series['variable']
-
-                site_id = site_info['siteCode'][0]['value']
-                site_name = site_info['siteName']
-                latitude = site_info['geoLocation']['geogLocation']['latitude']
-                longitude = site_info['geoLocation']['geogLocation']['longitude']
-                parameter_code = variable_info['variableCode'][0]['value']
-                parameter_name = variable_info['variableName']
-
-                latest_value = 'N/A'
-                if series['values'] and series['values'][0]['value']:
-                    latest_value = series['values'][0]['value'][-1]['value']
-
-                value_unit = 'N/A'
-                if 'unit' in variable_info and variable_info['unit']:
-                    if 'unitAbbreviation' in variable_info['unit']:
-                        value_unit = variable_info['unit']['unitAbbreviation']
-                    elif 'unitCode' in variable_info['unit']:
-                        value_unit = variable_info['unit']['unitCode']
-
-                site_data.append({
-                    'Site ID': site_id,
-                    'Site Name': site_name,
-                    'Latitude': latitude,
-                    'Longitude': longitude,
-                    'Parameter Code': parameter_code,
-                    'Parameter Name': parameter_name,
-                    'Latest Value': latest_value,
-                    'Value Unit': value_unit
-                })
-
-        return pd.DataFrame(site_data)
-    except Exception as e:
-        st.error(f"Error fetching USGS data: {e}")
+        json_data = response.json()
+    except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=300)
-def process_mesonet_station(station_id, year, station_coords):
-    """Process a single Mesonet station and calculate WBGT - always returns a row"""
-    lat, lon = station_coords.get(station_id, (None, None))
-    
-    try:
-        manifest_url = f"https://d266k7wxhw6o23.cloudfront.net/data/{station_id}/{year}/manifest.json"
-        manifest = requests.get(manifest_url, timeout=15).json()
-        if not manifest:
-            raise ValueError("Empty manifest")
+    all_rows = []
 
-        latest_day = max(manifest.keys())
-        key = manifest[latest_day]["key"]
-        data = requests.get(
-            f"https://d266k7wxhw6o23.cloudfront.net/{key}",
-            timeout=15
-        ).json()
-        df = pd.DataFrame(data["rows"], columns=data["columns"])
-        cols = ["TAIR", "DWPT", "WSPD", "SRAD", "PRES", "UTCTimestampCollected"]
-        if not all(c in df.columns for c in cols):
-            raise ValueError("Missing required columns")
+    if json_data and 'value' in json_data and 'timeSeries' in json_data['value']:
+        for series in json_data['value']['timeSeries']:
+            site_info = series['sourceInfo']
+            variable_info = series['variable']
 
-        tair_c, dwpt_c, wspd_mps, srad, pres_hpa = [
-            df[c].dropna().iloc[-1] for c in cols[:-1]
-        ]
-        pres_inhg = pres_hpa * 0.02953
-        obs_time = df["UTCTimestampCollected"].dropna().iloc[-1]
+            site_id = site_info['siteCode'][0]['value']
+            site_name = site_info['siteName']
+            lat = site_info['geoLocation']['geogLocation']['latitude']
+            lon = site_info['geoLocation']['geogLocation']['longitude']
 
-        wbgt_f_val = wbgt(
-            celsius_to_farenheit(tair_c),
-            wspd_mps * 2.23694,
-            srad,
-            pres_inhg,
-            celsius_to_farenheit(dwpt_c),
-        )
+            latest = "N/A"
+            if series['values'] and series['values'][0]['value']:
+                latest = series['values'][0]['value'][-1]['value']
 
-        return {
-            "name": station_id,
-            "latitude": lat,
-            "longitude": lon,
-            "wbgt_f": wbgt_f_val,
-            "Temperature (°F)": celsius_to_farenheit(tair_c),
-            "Dewpoint (°F)": celsius_to_farenheit(dwpt_c),
-            "Wind Speed (mph)": wspd_mps * 2.23694,
-            "observation_time": obs_time,
-            "source": "Mesonet",
-        }
+            unit = variable_info['unit'].get('unitAbbreviation', 'N/A')
 
-    except Exception as e:
-        if not hasattr(process_mesonet_station, '_error_shown'):
-            st.warning(f"Error processing Mesonet station {station_id}: {e}")
-            process_mesonet_station._error_shown = True
-        
-        return {
-            "name": station_id,
-            "latitude": lat,
-            "longitude": lon,
-            "wbgt_f": None,
-            "Temperature (°F)": None,
-            "Dewpoint (°F)": None,
-            "Wind Speed (mph)": None,
-            "observation_time": "Error",
-            "source": "Mesonet",
-        }
+            all_rows.append({
+                'Site ID': site_id,
+                'Site Name': site_name,
+                'Latitude': lat,
+                'Longitude': lon,
+                'Parameter Name': variable_info['variableName'],
+                'Latest Value': latest,
+                'Value Unit': unit
+            })
 
-@st.cache_data(ttl=300)
-def fetch_mesonet_data(year, station_coords, station_abbreviations):
-    """Fetch and process all Mesonet stations - always returns rows even on error"""
-    mesonet_data_rows = []
-    for station_id in station_abbreviations:
-        station_data = process_mesonet_station(station_id, year, station_coords)
-        if station_data is not None:
-            mesonet_data_rows.append(station_data)
-    
-    if not mesonet_data_rows:
-        return pd.DataFrame(columns=[
-            "name", "latitude", "longitude", "wbgt_f", 
-            "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)", 
-            "observation_time", "source"
-        ])
-    
-    df = pd.DataFrame(mesonet_data_rows)
-    
-    required_columns = [
-        "name", "latitude", "longitude", "wbgt_f", 
-        "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)", 
-        "observation_time", "source"
-    ]
-    for col in required_columns:
-        if col not in df.columns:
-            df[col] = None
-    
-    return df
+    return pd.DataFrame(all_rows)
 
+# -----------------------------
+# Parse Mesonet Station Coordinates
+# -----------------------------
 def get_station_coordinates():
-    """Parse station coordinates from text"""
-    station_coords_text = """FARM,36.93,-86.47
+
+    text = """FARM,36.93,-86.47
 RSVL,36.85,-86.92
 MRHD,38.22,-83.48
 MRRY,36.61,-88.34
@@ -392,33 +307,121 @@ BLOM,37.96,-85.31
 LEWP,37.92,-86.85
 STAN,37.85,-83.88
 BEDD,38.63,-85.32
-WKUCHAOS,36.98582726072027,-86.44967208166477
-WKUChaos,36.98582632147347,-86.44968800031974
-Etown,37.69563805082102,-85.88387790284976
-Glasgow,36.9774781561,-85.916651431
-WKUIMFields,36.9774781561,-85.9166514315
-Owensboro,36.9774781561,-85.9166514315
-WKU,36.9774781561,-85.9166514315
 """
-    station_coords = {}
-    station_abbreviations = []
-    for line in station_coords_text.strip().splitlines():
-        parts = line.split(',')
-        if len(parts) == 3:
-            abbrev = parts[0].strip()
-            try:
-                lat = float(parts[1].strip())
-                lon = float(parts[2].strip())
-                station_coords[abbrev] = (lat, lon)
-                station_abbreviations.append(abbrev)
-            except ValueError:
-                pass
-    return station_coords, station_abbreviations
 
-@st.cache_data(ttl=3600)  # Cache geocoding for 1 hour
-def geocode_stations(df_whitesquirrel):
-    """Geocode station locations"""
-    known_coords = {
+    coords = {}
+    abbrevs = []
+
+    for line in text.strip().splitlines():
+        p = line.split(',')
+        if len(p) == 3:
+            try:
+                abbrev = p[0]
+                coords[abbrev] = (float(p[1]), float(p[2]))
+                abbrevs.append(abbrev)
+            except:
+                pass
+
+    return coords, abbrevs
+
+# -----------------------------
+# Mesonet Station Processor
+# -----------------------------
+@st.cache_data(ttl=300)
+def process_mesonet_station(station_id, year, coordmap):
+
+    lat, lon = coordmap.get(station_id, (None, None))
+
+    try:
+        manifest_url = f"https://d266k7wxhw6o23.cloudfront.net/data/{station_id}/{year}/manifest.json"
+        manifest = requests.get(manifest_url, timeout=10).json()
+
+        latest_day = max(manifest.keys())
+        key = manifest[latest_day]["key"]
+
+        json_data = requests.get(
+            f"https://d266k7wxhw6o23.cloudfront.net/{key}",
+            timeout=10
+        ).json()
+
+        df = pd.DataFrame(json_data["rows"], columns=json_data["columns"])
+
+        required = ["TAIR", "DWPT", "WSPD", "SRAD", "PRES", "UTCTimestampCollected"]
+        if not all(c in df.columns for c in required):
+            raise ValueError("Missing Mesonet columns")
+
+        tair = df["TAIR"].dropna().iloc[-1]
+        dew = df["DWPT"].dropna().iloc[-1]
+        wspd = df["WSPD"].dropna().iloc[-1]
+        srad = df["SRAD"].dropna().iloc[-1]
+        pres_hpa = df["PRES"].dropna().iloc[-1]
+        timestamp = df["UTCTimestampCollected"].dropna().iloc[-1]
+
+        temp_f = celsius_to_farenheit(tair)
+        dew_f = celsius_to_farenheit(dew)
+        wspd_mph = wspd * 2.23694
+        pres_inhg = pres_hpa * 0.02953
+
+        wbgt_val = wbgt(
+            temp_f,
+            wspd_mph,
+            srad,
+            pres_inhg,
+            dew_f
+        )
+
+        return {
+            "name": station_id,
+            "latitude": lat,
+            "longitude": lon,
+            "wbgt_f": wbgt_val,
+            "Temperature (°F)": temp_f,
+            "Dewpoint (°F)": dew_f,
+            "Wind Speed (mph)": wspd_mph,
+            "observation_time": timestamp,
+            "source": "Mesonet"
+        }
+
+    except Exception as e:
+        return {
+            "name": station_id,
+            "latitude": lat,
+            "longitude": lon,
+            "wbgt_f": None,
+            "Temperature (°F)": None,
+            "Dewpoint (°F)": None,
+            "Wind Speed (mph)": None,
+            "observation_time": "Error",
+            "source": "Mesonet"
+        }
+
+# -----------------------------
+# Mesonet Fetch
+# -----------------------------
+@st.cache_data(ttl=300)
+def fetch_mesonet_data(year, coordmap, abbrevs):
+
+    rows = []
+
+    for station in abbrevs:
+        row = process_mesonet_station(station, year, coordmap)
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+
+    # ------------ FIX: FORCE MESONET TEMP + DEW TO NUMERIC ------------
+    df["Temperature (°F)"] = pd.to_numeric(df["Temperature (°F)"], errors="coerce")
+    df["Dewpoint (°F)"] = pd.to_numeric(df["Dewpoint (°F)"], errors="coerce")
+
+    return df
+
+# -----------------------------
+# Geocode WeatherSTEM stations
+# -----------------------------
+@st.cache_data(ttl=3600)
+def geocode_stations(df):
+
+    known = {
         "WKU": (36.9855, -86.4551),
         "WKU Chaos": (36.9855, -86.4551),
         "WKU IM Fields": (36.9809, -86.4614),
@@ -440,461 +443,359 @@ def geocode_stations(df_whitesquirrel):
         "Novelis Guthrie": (36.6025431022, -87.7186136559)
     }
 
-    df_whitesquirrel = df_whitesquirrel.copy()
-    df_whitesquirrel["latitude"] = None
-    df_whitesquirrel["longitude"] = None
+    df = df.copy()
+    df["latitude"] = None
+    df["longitude"] = None
 
     geolocator = Nominatim(user_agent="streamlit-wbgt-app")
-    geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1, swallow_exceptions=True)
+    geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
 
-    def locate(site: str):
-        if site in known_coords:
-            return known_coords[site]
-        if site.startswith("WKU"):
-            query = f"{site}, Western Kentucky University, Bowling Green, KY"
-        elif site in {"E'town", "Etown", "Elizabethtown"}:
-            query = "Elizabethtown, KY"
-        else:
-            query = f"{site}, Kentucky"
-        loc = geocode(query)
+    def lookup(site):
+        if site in known:
+            return known[site]
+        q = f"{site}, Kentucky"
+        loc = geocode(q)
         if loc:
             return (loc.latitude, loc.longitude)
         return (None, None)
 
-    for i, row in df_whitesquirrel.iterrows():
-        latlon = locate(row["Site"])
-        df_whitesquirrel.loc[i, "latitude"], df_whitesquirrel.loc[i, "longitude"] = latlon
+    for i, r in df.iterrows():
+        lat, lon = lookup(r["Site"])
+        df.loc[i, "latitude"] = lat
+        df.loc[i, "longitude"] = lon
 
-    return df_whitesquirrel
+    return df
 
-def wbgt_color(w):
-    """Color function by WBGT (°F)"""
-    if w is None or pd.isna(w):
+# -----------------------------
+# WBGT Color Scale
+# -----------------------------
+def wbgt_color(v):
+    if v is None or pd.isna(v):
         return "#808080"
-    elif w < 60:
+    if v < 60:
         return "#2ca02c"
-    elif w < 70:
+    if v < 70:
         return "#ff7f0e"
-    elif w < 80:
+    if v < 80:
         return "#d62728"
-    else:
-        return "#800026"
+    return "#800026"
 
 def marker_radius():
-    """Marker size function - fixed size for all markers"""
-    return 10  # Fixed size for all markers
+    return 10
 
-def create_map(combined_df, ky_sites_df, selected_measurement):
-    """Create the interactive Folium map"""
-    # Calculate center
-    all_lats = []
-    all_lons = []
+# -----------------------------
+# Folium Map Builder
+# -----------------------------
+def create_map(combined_df, usgs_df, selection):
+
+    # -----------------------------
+    # Determine Center of Map
+    # -----------------------------
+    all_lat = []
+    all_lon = []
 
     if not combined_df.empty:
-        df_for_center = combined_df.dropna(subset=["latitude", "longitude"])
-        if not df_for_center.empty:
-            all_lats.extend(df_for_center["latitude"].tolist())
-            all_lons.extend(df_for_center["longitude"].tolist())
+        df = combined_df.dropna(subset=["latitude", "longitude"])
+        all_lat += df["latitude"].tolist()
+        all_lon += df["longitude"].tolist()
 
-    if not ky_sites_df.empty:
-        df_usgs_center = ky_sites_df.dropna(subset=["Latitude", "Longitude"])
-        if not df_usgs_center.empty:
-            all_lats.extend(df_usgs_center["Latitude"].tolist())
-            all_lons.extend(df_usgs_center["Longitude"].tolist())
+    if not usgs_df.empty:
+        df = usgs_df.dropna(subset=["Latitude", "Longitude"])
+        all_lat += df["Latitude"].tolist()
+        all_lon += df["Longitude"].tolist()
 
-    if all_lats and all_lons:
-        center = [np.mean(all_lats), np.mean(all_lons)]
+    if all_lat:
+        center = [np.mean(all_lat), np.mean(all_lon)]
     else:
-        center = [37.1, -85.9]
+        center = [37.2, -85.7]
 
-    m = folium.Map(location=center, zoom_start=8, control_scale=True)
+    m = folium.Map(location=center, zoom_start=8)
 
-    # Base layers
-    folium.TileLayer(
-        tiles="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png",
-        attr='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; OpenStreetMap contributors',
-        name="CartoDB Voyager",
-        subdomains=["a","b","c","d"],
-        overlay=False,
-        control=True
-    ).add_to(m)
+    folium.TileLayer("cartodbpositron", name="Light").add_to(m)
+    folium.TileLayer("cartodbdark_matter", name="Dark").add_to(m)
+    folium.TileLayer("openstreetmap", name="OSM").add_to(m)
 
-    folium.TileLayer(
-        tiles="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-        attr='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; OpenStreetMap contributors',
-        name="CartoDB Dark Matter",
-        subdomains=["a","b","c","d"],
-        overlay=False,
-        control=True
-    ).add_to(m)
+    weather_layer = folium.FeatureGroup(name="Weather Stations").add_to(m)
+    usgs_layer = folium.FeatureGroup(name="USGS Gauges").add_to(m)
 
-    folium.TileLayer(
-        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr='Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community',
-        name="Esri World Imagery",
-        overlay=False,
-        control=True
-    ).add_to(m)
-
-    folium.TileLayer(
-        tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-        attr='Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)',
-        name="OpenTopoMap",
-        subdomains=["a","b","c"],
-        overlay=False,
-        control=True
-    ).add_to(m)
-
-    folium.TileLayer(
-        tiles="https://{s}.basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}{r}.png",
-        attr='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; OpenStreetMap contributors',
-        name="CartoDB Positron",
-        subdomains=["a","b","c","d"],
-        overlay=False,
-        control=True
-    ).add_to(m)
-
-    weather_layer = folium.FeatureGroup(name='Weather Stations')
-    usgs_layer = folium.FeatureGroup(name='USGS River Gauges')
-    weather_layer.add_to(m)
-    usgs_layer.add_to(m)
-
-    # Weather markers
+    # -----------------------------
+    # Weather Stations
+    # -----------------------------
     if not combined_df.empty:
         for _, row in combined_df.iterrows():
-            wbgt_val = row.get("wbgt_f")
+
+            site = row.get("name")
+            lat = row.get("latitude")
+            lon = row.get("longitude")
+            wb = row.get("wbgt_f")
             temp = row.get("Temperature (°F)")
             dew = row.get("Dewpoint (°F)")
-            site = row.get("name") if "name" in row else row.get("Site")
-            obs_time = row.get("observation_time") if "observation_time" in row else row.get("Observation Time")
-            source = row.get("source")
-            latitude = row.get("latitude")
-            longitude = row.get("longitude")
+            time = row.get("observation_time", "N/A")
+            src = row.get("source")
 
-            if pd.isna(latitude) or pd.isna(longitude):
+            if pd.isna(lat) or pd.isna(lon):
                 continue
 
-            if selected_measurement == "WBGT":
-                value = wbgt_val
-                color = wbgt_color(wbgt_val)
-                value_label = "WBGT"
-                value_unit = "°F"
-            elif selected_measurement == "Temperature":
+            if selection == "WBGT":
+                value = wb
+                label = "WBGT"
+            elif selection == "Temperature":
                 value = temp
-                color = wbgt_color(wbgt_val) if pd.notna(wbgt_val) else "#808080"
-                value_label = "Temperature"
-                value_unit = "°F"
-            elif selected_measurement == "Dewpoint":
-                value = dew
-                color = wbgt_color(wbgt_val) if pd.notna(wbgt_val) else "#808080"
-                value_label = "Dewpoint"
-                value_unit = "°F"
+                label = "Temperature"
             else:
-                value = wbgt_val
-                color = wbgt_color(wbgt_val)
-                value_label = "WBGT"
-                value_unit = "°F"
+                value = dew
+                label = "Dewpoint"
 
-            popup_html = f"""
-            <div style="font-family:system-ui;min-width:220px">
-              <h4 style="margin:0 0 6px 0">{site} ({source})</h4>
-              <div><b>Observed:</b> {obs_time if pd.notna(obs_time) else 'N/A'}</div>
-              <div><b>WBGT:</b> {f'{wbgt_val:.1f} °F' if pd.notna(wbgt_val) else 'N/A'}</div>
-              <div><b>Temperature:</b> {f'{temp:.1f} °F' if pd.notna(temp) else 'N/A'}</div>
-              <div><b>Dewpoint:</b> {f'{dew:.1f} °F' if pd.notna(dew) else 'N/A'}</div>
+            col = wbgt_color(wb)
+
+            popup = f"""
+            <div>
+                <h4>{site} ({src})</h4>
+                <b>Observed:</b> {time}<br>
+                <b>WBGT:</b> {wb if pd.notna(wb) else "N/A"} °F<br>
+                <b>Temperature:</b> {temp if pd.notna(temp) else "N/A"} °F<br>
+                <b>Dewpoint:</b> {dew if pd.notna(dew) else "N/A"} °F<br>
             </div>
             """
 
-            tooltip_text = (
-                f"{site}: {value_label} {value:.1f}{value_unit}"
-                if pd.notna(value)
-                else f"{site}: {value_label} N/A"
-            )
+            tooltip = f"{site}: {label} {value if pd.notna(value) else 'N/A'}"
 
-            marker = folium.CircleMarker(
-                location=[latitude, longitude],
-                radius=marker_radius(),
-                popup=folium.Popup(popup_html, max_width=280),
-                tooltip=tooltip_text,
-                color=color,
+            folium.CircleMarker(
+                location=[lat, lon],
+                radius=10,
+                color=col,
                 fill=True,
-                fill_color=color,
-                fill_opacity=0.8,
-                weight=1,
-            )
-            marker.add_to(weather_layer)
+                fill_color=col,
+                fill_opacity=0.85,
+                popup=popup,
+                tooltip=tooltip,
+            ).add_to(weather_layer)
 
-    # USGS markers
-    if not ky_sites_df.empty:
-        for site_id in ky_sites_df['Site ID'].unique():
-            site_rows = ky_sites_df[ky_sites_df['Site ID'] == site_id]
-            first_row = site_rows.iloc[0]
+    # -----------------------------
+    # USGS
+    # -----------------------------
+    if not usgs_df.empty:
+        for sid in usgs_df["Site ID"].unique():
 
-            latitude = first_row['Latitude']
-            longitude = first_row['Longitude']
-            site_name = first_row['Site Name']
+            rows = usgs_df[usgs_df["Site ID"] == sid]
+            r0 = rows.iloc[0]
 
-            popup_html = f"<div style='font-family:system-ui;min-width:220px'><h4 style='margin:0 0 6px 0'>{site_name}</h4>"
-            popup_html += f"<div><b>Site ID:</b> {site_id}</div>"
+            lat = r0["Latitude"]
+            lon = r0["Longitude"]
+            name = r0["Site Name"]
 
-            for _, row in site_rows.iterrows():
-                param_name = row['Parameter Name']
-                latest_value = row['Latest Value']
-                value_unit = row['Value Unit']
-                if latest_value != 'N/A':
-                    popup_html += f"<div><b>{param_name}:</b> {latest_value} {value_unit}</div>"
+            popup = f"<div><h4>{name}</h4>Site ID: {sid}<br>"
 
-            popup_html += "</div>"
+            for _, rr in rows.iterrows():
+                vn = rr["Parameter Name"]
+                v = rr["Latest Value"]
+                u = rr["Value Unit"]
+                popup += f"<b>{vn}:</b> {v} {u}<br>"
+
+            popup += "</div>"
 
             folium.Marker(
-                location=[latitude, longitude],
-                popup=folium.Popup(popup_html, max_width=280),
-                tooltip=f"{site_name} ({site_id})",
-                icon=folium.Icon(color='blue', icon='tint', prefix='fa')
+                location=[lat, lon],
+                popup=popup,
+                tooltip=f"{name} ({sid})",
+                icon=folium.Icon(color="blue", icon="tint", prefix="fa")
             ).add_to(usgs_layer)
 
+    # -----------------------------
     # Legend
-    legend_html = f"""
+    # -----------------------------
+    legend = """
     <div style="
-        position: fixed;
-        bottom: 30px; left: 30px; z-index: 9999;
-        background: white; padding: 10px 12px;
-        border: 1px solid #ccc; border-radius: 8px;
-        font-family: system-ui; font-size: 12px;">
-      <div style="font-weight:600; margin-bottom:6px;">WBGT (°F) Color Scale</div>
-      <div><span style="display:inline-block;width:12px;height:12px;background:#2ca02c;margin-right:6px;border:1px solid #999;"></span><60</div>
-      <div><span style="display:inline-block;width:12px;height:12px;background:#ff7f0e;margin-right:6px;border:1px solid #999;"></span>60–69.9</div>
-      <div><span style="display:inline-block;width:12px;height:12px;background:#d62728;margin-right:6px;border:1px solid #999;"></span>70–79.9</div>
-      <div><span style="display:inline-block;width:12px;height:12px;background:#800026;margin-right:6px;border:1px solid #999;"></span>≥80</div>
-      <div><span style="display:inline-block;width:12px;height:12px;background:#808080;margin-right:6px;border:1px solid #999;"></span>N/A</div>
-      <div style="margin-top:6px;"><em>Displaying: {selected_measurement}</em></div>
+        position: fixed; 
+        bottom: 30px; left: 30px; 
+        z-index: 9999; background: white; 
+        padding: 10px; border: 1px solid #ccc;">
+        <b>WBGT Scale (°F)</b><br>
+        <span style="background:#2ca02c;width:12px;height:12px;display:inline-block;"></span> <60<br>
+        <span style="background:#ff7f0e;width:12px;height:12px;display:inline-block;"></span> 60–69.9<br>
+        <span style="background:#d62728;width:12px;height:12px;display:inline-block;"></span> 70–79.9<br>
+        <span style="background:#800026;width:12px;height:12px;display:inline-block;"></span> ≥80<br>
+        <span style="background:#808080;width:12px;height:12px;display:inline-block;"></span> N/A<br>
     </div>
     """
-    m.get_root().html.add_child(folium.Element(legend_html))
 
+    m.get_root().html.add_child(folium.Element(legend))
     return m
 
-def upload_map_to_github(map_filename):
-    """Upload map HTML file to GitHub repository"""
+# -----------------------------
+# GitHub Upload Helper
+# -----------------------------
+def upload_map_to_github(filename):
+
+    if not os.path.exists(filename):
+        return {"success": False, "error": "File not found"}
+
+    token = None
     try:
-        if not os.path.exists(map_filename):
-            return {"success": False, "error": f"Map file {map_filename} not found"}
-        
-        with open(map_filename, 'r', encoding='utf-8') as f:
-            map_content = f.read()
-        
-        repo_owner = "dsoc-people"
-        repo_name = "DSOCWBGT2"
-        file_path = "Image storage/wbgt_map.html"
-        
-        try:
-            github_token = st.secrets.get("GITHUB_TOKEN", None)
-        except Exception:
-            github_token = None
-        
-        if not github_token:
-            github_token = os.getenv("GITHUB_TOKEN")
-        
-        if not github_token:
-            return {
-                "success": False,
-                "error": "GITHUB_TOKEN not set; skipping upload."
-            }
-        
-        import requests
-        
-        url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}"
-        headers = {
-            "Authorization": f"token {github_token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        
-        response = requests.get(url, headers=headers, timeout=10)
-        sha = None
-        if response.status_code == 200:
-            sha = response.json().get("sha")
-        elif response.status_code != 404:
-            return {
-                "success": False,
-                "error": f"GitHub API error checking file: {response.status_code} - {response.text}"
-            }
-        
-        content_encoded = base64.b64encode(map_content.encode('utf-8')).decode('utf-8')
-        
-        data = {
-            "message": "Update WBGT map",
-            "content": content_encoded,
-            "branch": "main"
-        }
-        if sha:
-            data["sha"] = sha
-        
-        response = requests.put(url, json=data, headers=headers, timeout=10)
-        
-        if response.status_code in [200, 201]:
-            return {
-                "success": True,
-                "method": "api",
-                "url": f"https://github.com/{repo_owner}/{repo_name}/blob/main/{file_path}"
-            }
-        else:
-            return {
-                "success": False,
-                "error": f"GitHub API error: {response.status_code} - {response.text}"
-            }
-        
-    except Exception as e:
+        token = st.secrets["GITHUB_TOKEN"]
+    except:
+        token = os.getenv("GITHUB_TOKEN")
+
+    if not token:
+        return {"success": False, "error": "No GitHub token provided"}
+
+    repo_owner = "dsoc-people"
+    repo_name = "DSOCWBGT2"
+    path = "Image storage/wbgt_map.html"
+
+    url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{path}"
+    headers = {"Authorization": f"token {token}"}
+
+    # Read mapping
+    content = open(filename, "r", encoding="utf-8").read()
+    encoded = base64.b64encode(content.encode()).decode()
+
+    r = requests.get(url, headers=headers, timeout=10)
+
+    sha = r.json().get("sha") if r.status_code == 200 else None
+
+    payload = {
+        "message": "Update WBGT map",
+        "content": encoded,
+        "branch": "main"
+    }
+    if sha:
+        payload["sha"] = sha
+
+    r = requests.put(url, headers=headers, json=payload, timeout=10)
+
+    if r.status_code in (200, 201):
         return {
-            "success": False,
-            "error": f"Upload failed: {str(e)}"
+            "success": True,
+            "url": f"https://github.com/{repo_owner}/{repo_name}/blob/main/{path}"
         }
 
-# Main Streamlit app
-def main():
-    st.title("🌡️ Multi-Source Weather Station WBGT Monitor")
-    st.markdown("**Wet Bulb Globe Temperature (WBGT) monitoring from multiple data sources**")
+    return {"success": False, "error": r.text}
 
-    # Session state for lazy Mesonet loading
+# -----------------------------
+# MAIN APP
+# -----------------------------
+def main():
+
+    st.title("🌡️ Multi-Source Weather Station WBGT Monitor")
+
     if "load_mesonet" not in st.session_state:
         st.session_state["load_mesonet"] = False
 
-    # Sidebar controls
+    # --------------------
+    # SIDEBAR
+    # --------------------
     with st.sidebar:
         st.header("Data Sources")
-        show_whitesquirrel = st.checkbox("White Squirrel Weather", value=True)
-        show_mesonet = st.checkbox("Mesonet (slower)", value=True)
-        show_usgs = st.checkbox("USGS River Gauges", value=False)
+
+        show_white = st.checkbox("White Squirrel Weather", True)
+        show_mesonet = st.checkbox("Mesonet (slow)", True)
+        show_usgs = st.checkbox("USGS River Gauges", False)
+        upload = st.checkbox("Upload map to GitHub", False)
 
         if show_mesonet:
-            st.caption("Mesonet data can take a while to load.")
             if not st.session_state["load_mesonet"]:
-                if st.button("Load Mesonet data (once)"):
+                if st.button("Load Mesonet Data"):
                     st.session_state["load_mesonet"] = True
                     st.rerun()
             else:
-                st.caption("Mesonet data is enabled (cached for 5 minutes).")
+                st.caption("Mesonet enabled (cached).")
 
-        upload_to_github = st.checkbox("Upload latest map to GitHub", value=False)
-        
-        st.info("🔄 Auto-refreshing every 5 minutes")
-        st_autorefresh(interval=300000, limit=None, key="weather_refresh")
+        st_autorefresh(interval=300000, key="refresh")
 
-    # Measurement selector
-    selected_measurement = st.radio(
-        "Value to display on the map",
+    # --------------------
+    # Selection
+    # --------------------
+    selection = st.radio(
+        "Select display metric",
         ["WBGT", "Temperature", "Dewpoint"],
-        index=0,
-        horizontal=True,
+        horizontal=True
     )
 
-    # --- Fetch data (fast sources first, no global spinner) ---
-    if show_whitesquirrel:
-        df_whitesquirrel = fetch_weatherstem_data()
-        df_whitesquirrel = geocode_stations(df_whitesquirrel)
-        df_whitesquirrel = df_whitesquirrel.rename(columns={
-            "WBGT (°F)": "wbgt_f", 
-            "Site": "name",
-            "Observation Time": "observation_time"
-        })
-        df_whitesquirrel['source'] = 'White Squirrel Weather'
-    else:
-        df_whitesquirrel = pd.DataFrame()
+    # --------------------
+    # Fetch Data
+    # --------------------
+    df_white = pd.DataFrame()
+    df_mesonet = pd.DataFrame()
+    df_usgs = pd.DataFrame()
+
+    if show_white:
+        df_white = fetch_weatherstem_data()
+        df_white = geocode_stations(df_white)
+        df_white = df_white.rename(columns={"Site": "name", "Observation Time": "observation_time"})
+        df_white["source"] = "White Squirrel Weather"
 
     if show_usgs:
-        ky_sites_df = fetch_usgs_data()
-    else:
-        ky_sites_df = pd.DataFrame()
+        df_usgs = fetch_usgs_data()
 
-    # Mesonet is optional & lazy
-    df_mesonet = pd.DataFrame()
     if show_mesonet and st.session_state["load_mesonet"]:
-        station_coords, station_abbreviations = get_station_coordinates()
+        coords, abbrevs = get_station_coordinates()
         year = datetime.utcnow().year
-        with st.spinner("Loading Mesonet data..."):
-            df_mesonet = fetch_mesonet_data(year, station_coords, station_abbreviations)
 
-    # --- Combine dataframes ---
-    dfs_to_combine = []
-    if show_whitesquirrel and not df_whitesquirrel.empty:
-        dfs_to_combine.append(df_whitesquirrel.copy())
-    if show_mesonet and not df_mesonet.empty:
-        dfs_to_combine.append(df_mesonet.copy())
-    
-    if len(dfs_to_combine) > 1:
-        all_columns = list(set([col for df in dfs_to_combine for col in df.columns.tolist()]))
-        aligned_dfs = []
-        for df in dfs_to_combine:
-            df_aligned = df.copy()
-            for col in all_columns:
-                if col not in df_aligned.columns:
-                    df_aligned[col] = None
-            df_aligned = df_aligned[all_columns]
-            aligned_dfs.append(df_aligned)
-        combined_df = pd.concat(aligned_dfs, ignore_index=True)
-    elif len(dfs_to_combine) == 1:
-        combined_df = dfs_to_combine[0].copy()
+        with st.spinner("Loading Mesonet data…"):
+            df_mesonet = fetch_mesonet_data(year, coords, abbrevs)
+
+    # --------------------
+    # Combine Weather Data
+    # --------------------
+    dfs = []
+
+    if not df_white.empty:
+        dfs.append(df_white)
+
+    if not df_mesonet.empty:
+        dfs.append(df_mesonet)
+
+    if dfs:
+        combined = pd.concat(dfs, ignore_index=True)
     else:
-        combined_df = pd.DataFrame()
+        combined = pd.DataFrame()
 
-    # Ensure temp/dew columns exist
-    if not combined_df.empty:
-        for col in ["Temperature (°F)", "Dewpoint (°F)"]:
-            if col not in combined_df.columns:
-                combined_df[col] = np.nan
+    # --------------------
+    # Summary
+    # --------------------
+    c1, c2, c3 = st.columns(3)
+    c1.metric("White Squirrel Stations", len(df_white))
+    c2.metric("Mesonet Stations", len(df_mesonet))
+    c3.metric("USGS Gauges", df_usgs["Site ID"].nunique() if not df_usgs.empty else 0)
 
-    # --- Summary metrics ---
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("White Squirrel Weather Stations", len(df_whitesquirrel) if not df_whitesquirrel.empty else 0)
-    with col2:
-        st.metric("Mesonet Stations", len(df_mesonet) if not df_mesonet.empty else 0)
-    with col3:
-        st.metric("USGS River Gauges", ky_sites_df['Site ID'].nunique() if not ky_sites_df.empty else 0)
-
-    # Data tables
+    # --------------------
+    # Tables
+    # --------------------
     if st.checkbox("Show Data Tables"):
-        tab1, tab2, tab3 = st.tabs(["White Squirrel Weather", "Mesonet", "USGS"])
-        
-        with tab1:
-            if not df_whitesquirrel.empty:
-                st.dataframe(df_whitesquirrel, use_container_width=True)
-            else:
-                st.info("No White Squirrel Weather data available.")
-        
-        with tab2:
-            if not df_mesonet.empty:
-                st.dataframe(df_mesonet, use_container_width=True)
-            else:
-                st.info("Mesonet not loaded yet or returned no data.")
-        
-        with tab3:
-            if not ky_sites_df.empty:
-                st.dataframe(ky_sites_df, use_container_width=True)
-            else:
-                st.info("No USGS data available.")
+        t1, t2, t3 = st.tabs(["White Squirrel", "Mesonet", "USGS"])
 
-    # Optional quick debug
-    if not combined_df.empty and st.checkbox("Show Temperature Debug Sample"):
-        st.write(combined_df[["name", "wbgt_f", "Temperature (°F)", "Dewpoint (°F)"]].head(10))
+        with t1:
+            st.dataframe(df_white)
 
-    # --- Map ---
-    if not combined_df.empty or not ky_sites_df.empty:
+        with t2:
+            st.dataframe(df_mesonet)
+
+        with t3:
+            st.dataframe(df_usgs)
+
+    # --------------------
+    # Map
+    # --------------------
+    if not combined.empty or not df_usgs.empty:
         st.subheader("Interactive Map")
-        m = create_map(combined_df, ky_sites_df, selected_measurement)
-        
-        map_filename = "wbgt_map.html"
-        m.save(map_filename)
-        
-        if upload_to_github:
-            upload_status = upload_map_to_github(map_filename)
-            if upload_status.get("success"):
-                st.success(f"✅ Map uploaded to GitHub: {upload_status.get('url', '')}")
-            else:
-                st.warning(f"⚠️ Could not upload map to GitHub: {upload_status.get('error', 'Unknown error')}")
 
-        st_folium(m, width=None, height=600)
+        m = create_map(combined, df_usgs, selection)
+
+        filename = "wbgt_map.html"
+        m.save(filename)
+
+        if upload:
+            status = upload_map_to_github(filename)
+            if status["success"]:
+                st.success(f"Map uploaded: {status['url']}")
+            else:
+                st.warning(f"Upload failed: {status['error']}")
+
+        st_folium(m, height=600, width=None)
+
     else:
-        st.warning("No data available to display on map. Please enable at least one data source.")
+        st.warning("No data available.")
 
 if __name__ == "__main__":
     main()
