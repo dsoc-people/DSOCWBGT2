@@ -120,7 +120,6 @@ JimBeam Clermont,37.9317945798,-85.6520369416
 JimBeam Old Crow,38.1463823354,-84.8415031586
 JimBeam Grand Dad,38.215725282,-84.8093261477
 Woodford County Courthouse,38.052717,-84.73067
-Adair County High School,37.107667,-85.32824
 Clinton County High School,36.708211,-85.131276
 Novelis Guthrie,36.6025431022,-87.7186136559
 """
@@ -236,6 +235,18 @@ name_variants = {
     "Glasgow": "Glasgow",
     "WKU": "WKU",
 }
+# Normalize Makers Mark & Jim Beam station names to match WeatherSTEM URL keys
+name_variants.update({
+    "Makers Mark Warehouse": "Maker's Mark Warehouse",
+    "Makers Mark St Mary": "Maker's Mark St Mary",
+    "Makers Mark Lebanon": "Maker's Mark Lebanon",
+
+    "JimBeam Grand Dad": "Jim Beam Grand Dad",
+    "JimBeam Old Crow": "Jim Beam Old Crow",
+    "JimBeam Booker Noe": "Jim Beam Booker Noe",
+    "JimBeam Bardstown": "Jim Beam Bardstown",
+    "JimBeam Clermont": "Jim Beam Clermont",
+})
 
 # ---------------- WeatherSTEM URLs ----------------
 urls = {
@@ -255,7 +266,6 @@ urls = {
     "Jim Beam Old Crow": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/franklin-ky/jboldcrow/latest.json",
     "Jim Beam Grand Dad": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/franklin-ky/jbgranddad/latest.json",
     "Woodford County Courthouse": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/woodford/courthouse/latest.json",
-    "Adair County High School": "https://cdn/weatherstem.com/dashboard/data/dynamic/model/adair/achs/latest.json",
     "Clinton County High School": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/clinton/clintonhs/latest.json",
     "Novelis Guthrie": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/todd/novelis/latest.json"
 }
