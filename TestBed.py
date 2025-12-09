@@ -227,22 +227,30 @@ def process_mesonet_station(station_id, year, station_coords):
 
         wbgt_f = wbgt(tair_f, wspd_mph, srad, pres_inhg, dwpt_f)
 
-        # Explicitly return with all required columns
+        # Explicitly return with all required columns - ensure values are not numpy types
         result = {
-            "name": station_id,
-            "latitude": lat,
-            "longitude": lon,
-            "wbgt_f": wbgt_f,
+            "name": str(station_id),
+            "latitude": float(lat) if lat is not None else None,
+            "longitude": float(lon) if lon is not None else None,
+            "wbgt_f": float(wbgt_f) if not pd.isna(wbgt_f) else None,
             "Temperature (°F)": float(tair_f) if not pd.isna(tair_f) else None,
             "Dewpoint (°F)": float(dwpt_f) if not pd.isna(dwpt_f) else None,
             "Wind Speed (mph)": float(wspd_mph) if not pd.isna(wspd_mph) else None,
-            "observation_time": obs_time,
+            "observation_time": str(obs_time) if obs_time is not None else "N/A",
             "source": "Mesonet",
         }
         return result
 
-    except Exception:
+    except Exception as e:
         # Always return a row even on error, matching the provided code
+        # Log the error for debugging but don't break the app
+        import traceback
+        error_msg = str(e)
+        # Only show first error to avoid spam
+        if not hasattr(process_mesonet_station, '_error_shown'):
+            st.warning(f"Error processing Mesonet station {station_id}: {error_msg}")
+            process_mesonet_station._error_shown = True
+        
         return {
             "name": station_id,
             "latitude": lat,
@@ -262,9 +270,31 @@ def fetch_mesonet_data(year, station_coords, station_abbreviations):
     for station_id in station_abbreviations:
         station_data = process_mesonet_station(station_id, year, station_coords)
         # Always append - function now always returns a row
-        mesonet_data_rows.append(station_data)
+        if station_data is not None:
+            mesonet_data_rows.append(station_data)
     
-    return pd.DataFrame(mesonet_data_rows)
+    if not mesonet_data_rows:
+        # Return empty dataframe with correct columns
+        return pd.DataFrame(columns=[
+            "name", "latitude", "longitude", "wbgt_f", 
+            "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)", 
+            "observation_time", "source"
+        ])
+    
+    # Create DataFrame and ensure all expected columns exist
+    df = pd.DataFrame(mesonet_data_rows)
+    
+    # Explicitly ensure required columns exist (fill with None if missing)
+    required_columns = [
+        "name", "latitude", "longitude", "wbgt_f", 
+        "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)", 
+        "observation_time", "source"
+    ]
+    for col in required_columns:
+        if col not in df.columns:
+            df[col] = None
+    
+    return df
 
 def get_station_coordinates():
     """Parse station coordinates from text"""
@@ -814,9 +844,13 @@ def main():
             # Verify Temperature and Dewpoint columns exist
             if not df_mesonet.empty:
                 if "Temperature (°F)" not in df_mesonet.columns:
-                    st.error("❌ Mesonet dataframe missing 'Temperature (°F)' column!")
+                    st.error(f"❌ Mesonet dataframe missing 'Temperature (°F)' column! Columns: {list(df_mesonet.columns)}")
                 if "Dewpoint (°F)" not in df_mesonet.columns:
-                    st.error("❌ Mesonet dataframe missing 'Dewpoint (°F)' column!")
+                    st.error(f"❌ Mesonet dataframe missing 'Dewpoint (°F)' column! Columns: {list(df_mesonet.columns)}")
+                # Debug: Show first row structure
+                if len(df_mesonet) > 0:
+                    first_row = df_mesonet.iloc[0].to_dict()
+                    st.write("🔍 First Mesonet row keys:", list(first_row.keys()))
         else:
             df_mesonet = pd.DataFrame()
 
