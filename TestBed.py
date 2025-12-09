@@ -666,6 +666,9 @@ def upload_map_to_github(map_filename):
     """Upload map HTML file to GitHub repository"""
     try:
         # Read the map file
+        if not os.path.exists(map_filename):
+            return {"success": False, "error": f"Map file {map_filename} not found"}
+        
         with open(map_filename, 'r', encoding='utf-8') as f:
             map_content = f.read()
         
@@ -673,7 +676,15 @@ def upload_map_to_github(map_filename):
         repo_owner = "dsoc-people"
         repo_name = "DSOCWBGT2"
         file_path = "Image storage/wbgt_map.html"  # Path in GitHub repo
-        github_token = os.getenv("GITHUB_TOKEN")
+        
+        # Try to get token from Streamlit secrets first, then environment variable
+        try:
+            github_token = st.secrets.get("GITHUB_TOKEN", None)
+        except:
+            github_token = None
+        
+        if not github_token:
+            github_token = os.getenv("GITHUB_TOKEN")
         
         if not github_token:
             # Try to use git command as fallback
@@ -689,17 +700,29 @@ def upload_map_to_github(map_filename):
                 if result.returncode == 0:
                     # Use git to commit and push
                     subprocess.run(["git", "add", map_filename], check=False, timeout=5)
-                    subprocess.run(
+                    commit_result = subprocess.run(
                         ["git", "commit", "-m", "Update WBGT map", map_filename],
-                        check=False,
+                        capture_output=True,
+                        text=True,
                         timeout=5
                     )
-                    subprocess.run(["git", "push"], check=False, timeout=10)
-                    return
-            except Exception:
-                pass
-            
-            raise Exception("GITHUB_TOKEN environment variable not set. Please set it in your environment or use git commands.")
+                    push_result = subprocess.run(
+                        ["git", "push"],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+                    if push_result.returncode == 0:
+                        return {
+                            "success": True,
+                            "method": "git",
+                            "url": f"https://github.com/{repo_owner}/{repo_name}/blob/main/{file_path}"
+                        }
+            except Exception as git_error:
+                return {
+                    "success": False,
+                    "error": f"GITHUB_TOKEN not set and git push failed: {str(git_error)}"
+                }
         
         # Use GitHub API
         import requests
@@ -716,6 +739,14 @@ def upload_map_to_github(map_filename):
         sha = None
         if response.status_code == 200:
             sha = response.json().get("sha")
+        elif response.status_code == 404:
+            # File doesn't exist yet, that's okay
+            pass
+        else:
+            return {
+                "success": False,
+                "error": f"GitHub API error checking file: {response.status_code} - {response.text}"
+            }
         
         # Encode content
         content_encoded = base64.b64encode(map_content.encode('utf-8')).decode('utf-8')
@@ -731,12 +762,24 @@ def upload_map_to_github(map_filename):
         
         # Upload file
         response = requests.put(url, json=data, headers=headers, timeout=10)
-        response.raise_for_status()
+        
+        if response.status_code in [200, 201]:
+            return {
+                "success": True,
+                "method": "api",
+                "url": f"https://github.com/{repo_owner}/{repo_name}/blob/main/{file_path}"
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"GitHub API error: {response.status_code} - {response.text}"
+            }
         
     except Exception as e:
-        # If GitHub upload fails, just log it - don't break the app
-        print(f"GitHub upload error: {e}")
-        raise
+        return {
+            "success": False,
+            "error": f"Upload failed: {str(e)}"
+        }
 
 # Main Streamlit app
 def main():
@@ -879,10 +922,36 @@ def main():
         m.save(map_filename)
         
         # Upload to GitHub
-        try:
-            upload_map_to_github(map_filename)
-        except Exception as e:
-            st.warning(f"Could not upload map to GitHub: {e}")
+        upload_status = upload_map_to_github(map_filename)
+        if upload_status.get("success"):
+            st.success(f"✅ Map uploaded to GitHub: {upload_status.get('url', '')}")
+        else:
+            st.warning(f"⚠️ Could not upload map to GitHub: {upload_status.get('error', 'Unknown error')}")
+            with st.expander("Setup Instructions"):
+                st.markdown("""
+                **To enable GitHub upload:**
+                
+                1. **Create a GitHub Personal Access Token:**
+                   - Go to https://github.com/settings/tokens
+                   - Click "Generate new token (classic)"
+                   - Give it a name like "WBGT Map Upload"
+                   - Select scope: `repo` (full control of private repositories)
+                   - Click "Generate token"
+                   - Copy the token immediately (you won't see it again!)
+                
+                2. **Set the token as an environment variable:**
+                   ```bash
+                   export GITHUB_TOKEN=your_token_here
+                   ```
+                
+                3. **Or set it in your Streamlit secrets:**
+                   Create `.streamlit/secrets.toml`:
+                   ```toml
+                   GITHUB_TOKEN = "your_token_here"
+                   ```
+                
+                4. **Restart your Streamlit app**
+                """)
         
         st_folium(m, width=None, height=600)
     else:
