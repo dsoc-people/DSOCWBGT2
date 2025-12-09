@@ -226,30 +226,17 @@ def process_mesonet_station(station_id, year, station_coords):
             if not all(col in df.columns for col in required_columns):
                 return None
 
-            last_valid_indices = {col: df[col].last_valid_index() for col in required_columns}
-
-            tair_c = np.nan
-            dwpt_c = np.nan
-            wspd_mps = np.nan
-            srad = np.nan
-            pres_inhg = np.nan
-            observation_time = "N/A"
-
-            if last_valid_indices["TAIR"] is not None:
-                tair_c = df.loc[last_valid_indices["TAIR"], "TAIR"]
-            if last_valid_indices["DWPT"] is not None:
-                dwpt_c = df.loc[last_valid_indices["DWPT"], "DWPT"]
-            if last_valid_indices["WSPD"] is not None:
-                wspd_mps = df.loc[last_valid_indices["WSPD"], "WSPD"]
-            if last_valid_indices["SRAD"] is not None:
-                srad = df.loc[last_valid_indices["SRAD"], "SRAD"]
-            if last_valid_indices["PRES"] is not None:
-                pres_hpa = df.loc[last_valid_indices["PRES"], "PRES"]
+            # Use dropna().iloc[-1] approach for more robust data extraction
+            try:
+                tair_c = df["TAIR"].dropna().iloc[-1]
+                dwpt_c = df["DWPT"].dropna().iloc[-1]
+                wspd_mps = df["WSPD"].dropna().iloc[-1]
+                srad = df["SRAD"].dropna().iloc[-1]
+                pres_hpa = df["PRES"].dropna().iloc[-1]
                 pres_inhg = pres_hpa * 0.02953
-            else:
+                observation_time = df["UTCTimestampCollected"].dropna().iloc[-1]
+            except (IndexError, KeyError):
                 return None
-            if last_valid_indices["UTCTimestampCollected"] is not None:
-                observation_time = df.loc[last_valid_indices["UTCTimestampCollected"], "UTCTimestampCollected"]
 
         tair_f = celsius_to_farenheit(tair_c) if tair_c is not None and not np.isnan(tair_c) else np.nan
         dwpt_f = celsius_to_farenheit(dwpt_c) if dwpt_c is not None and not np.isnan(dwpt_c) else np.nan
@@ -804,17 +791,10 @@ def main():
             help="Select which measurement to display on the map markers"
         )
         
-        st.header("Auto-Refresh")
-        auto_refresh_enabled = st.checkbox("Enable Auto-Refresh", value=False)
-        if auto_refresh_enabled:
-            st.info("🔄 Auto-refreshing every 5 minutes")
-            # Run auto-refresh every 5 minutes (300 seconds = 300000 milliseconds)
-            count = st_autorefresh(interval=300000, limit=None, key="weather_refresh")
-            if count > 0:
-                st.cache_data.clear()
-                st.rerun()
-        
-        if st.button("🔄 Manual Refresh"):
+        st.info("🔄 Auto-refreshing every 5 minutes")
+        # Always run auto-refresh every 5 minutes (300 seconds = 300000 milliseconds)
+        count = st_autorefresh(interval=300000, limit=None, key="weather_refresh")
+        if count > 0:
             st.cache_data.clear()
             st.rerun()
 
