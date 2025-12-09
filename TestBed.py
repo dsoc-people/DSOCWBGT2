@@ -13,6 +13,7 @@ from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 import math
 from streamlit_folium import st_folium
+from streamlit_autorefresh import st_autorefresh
 
 # Page configuration
 st.set_page_config(
@@ -667,8 +668,19 @@ def main():
         st.header("Settings")
         year = st.selectbox("Year", ["2025", "2024", "2023"], index=0)
         
-        if st.button("🔄 Refresh Data"):
+        st.header("Auto-Refresh")
+        auto_refresh_enabled = st.checkbox("Enable Auto-Refresh", value=False)
+        if auto_refresh_enabled:
+            st.info("🔄 Auto-refreshing every 5 minutes")
+            # Run auto-refresh every 5 minutes (300 seconds = 300000 milliseconds)
+            count = st_autorefresh(interval=300000, limit=None, key="weather_refresh")
+            if count > 0:
+                st.cache_data.clear()
+                st.rerun()
+        
+        if st.button("🔄 Manual Refresh"):
             st.cache_data.clear()
+            st.rerun()
 
     # Fetch data
     with st.spinner("Fetching weather data..."):
