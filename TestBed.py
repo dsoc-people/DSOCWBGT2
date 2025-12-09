@@ -16,6 +16,7 @@ from streamlit_folium import st_folium
 from streamlit_autorefresh import st_autorefresh
 import base64
 import os
+from datetime import datetime
 
 # Page configuration
 st.set_page_config(
@@ -63,7 +64,7 @@ def wbgt(tempF, mph, rad, bar, dpF):
     dpC = farenheit_to_celsius(dpF)
 
     if np.isnan(tempC) or np.isnan(dpC) or np.isnan(p):
-         wbc = np.nan
+        wbc = np.nan
     else:
         wbc = dbdp2wb(tempC, dpC, p)
 
@@ -107,13 +108,6 @@ def fetch_weatherstem_data():
         "Novelis Guthrie": "https://cdn.weatherstem.com/dashboard/data/dynamic/model/todd/novelis/latest.json"
     }
 
-    target_sensors = [
-        "Wet Bulb Globe Temperature",
-        "Thermometer",
-        "Dewpoint",
-        "Anemometer"
-    ]
-
     data = []
     for site, url in urls.items():
         try:
@@ -124,15 +118,27 @@ def fetch_weatherstem_data():
             records = site_json.get("records", [])
             time_obs = site_json.get("time", "N/A")
 
-            wbgt = extract_value(records, "Wet Bulb Globe Temperature")
+            wbgt_val = extract_value(records, "Wet Bulb Globe Temperature")
+
+            # More robust temperature / dewpoint / wind extraction
             temp = extract_value(records, "Thermometer")
+            if temp is None:
+                temp = extract_value(records, "Temperature")
+            if temp is None:
+                temp = extract_value(records, "Air Temperature")
+
             dewpt = extract_value(records, "Dewpoint")
+            if dewpt is None:
+                dewpt = extract_value(records, "Dew Point")
+
             wind = extract_value(records, "Anemometer")
+            if wind is None:
+                wind = extract_value(records, "Wind")
 
             data.append({
                 "Site": site,
                 "Observation Time": time_obs,
-                "WBGT (°F)": wbgt,
+                "WBGT (°F)": wbgt_val,
                 "Temperature (°F)": temp,
                 "Dewpoint (°F)": dewpt,
                 "Wind Speed (mph)": wind,
@@ -160,7 +166,7 @@ def fetch_usgs_data():
     usgs_iv_ky_url = 'https://waterservices.usgs.gov/nwis/iv/?format=json&stateCd=ky&siteStatus=active'
     
     try:
-        response = requests.get(usgs_iv_ky_url, timeout=30)
+        response = requests.get(usgs_iv_ky_url, timeout=10)
         response.raise_for_status()
         ky_sites_iv_json = response.json()
 
@@ -234,7 +240,7 @@ def process_mesonet_station(station_id, year, station_coords):
         obs_time = df["UTCTimestampCollected"].dropna().iloc[-1]
 
         # Calculate WBGT using the same approach as working code
-        wbgt_f = wbgt(
+        wbgt_f_val = wbgt(
             celsius_to_farenheit(tair_c),
             wspd_mps * 2.23694,
             srad,
@@ -247,7 +253,7 @@ def process_mesonet_station(station_id, year, station_coords):
             "name": station_id,
             "latitude": lat,
             "longitude": lon,
-            "wbgt_f": wbgt_f,
+            "wbgt_f": wbgt_f_val,
             "Temperature (°F)": celsius_to_farenheit(tair_c),
             "Dewpoint (°F)": celsius_to_farenheit(dwpt_c),
             "Wind Speed (mph)": wspd_mps * 2.23694,
@@ -256,8 +262,6 @@ def process_mesonet_station(station_id, year, station_coords):
         }
 
     except Exception as e:
-        # Always return a row even on error, matching the provided code
-        # Log the error for debugging but don't break the app
         import traceback
         error_msg = str(e)
         # Only show first error to avoid spam
@@ -283,22 +287,18 @@ def fetch_mesonet_data(year, station_coords, station_abbreviations):
     mesonet_data_rows = []
     for station_id in station_abbreviations:
         station_data = process_mesonet_station(station_id, year, station_coords)
-        # Always append - function now always returns a row
         if station_data is not None:
             mesonet_data_rows.append(station_data)
     
     if not mesonet_data_rows:
-        # Return empty dataframe with correct columns
         return pd.DataFrame(columns=[
             "name", "latitude", "longitude", "wbgt_f", 
             "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)", 
             "observation_time", "source"
         ])
     
-    # Create DataFrame and ensure all expected columns exist
     df = pd.DataFrame(mesonet_data_rows)
     
-    # Explicitly ensure required columns exist (fill with None if missing)
     required_columns = [
         "name", "latitude", "longitude", "wbgt_f", 
         "Temperature (°F)", "Dewpoint (°F)", "Wind Speed (mph)", 
@@ -458,7 +458,6 @@ def geocode_stations(df_whitesquirrel):
     def locate(site: str):
         if site in known_coords:
             return known_coords[site]
-        query = site
         if site.startswith("WKU"):
             query = f"{site}, Western Kentucky University, Bowling Green, KY"
         elif site in {"E'town", "Etown", "Elizabethtown"}:
@@ -563,7 +562,6 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
         control=True
     ).add_to(m)
 
-    # Create a single layer group (no layer control - using sidebar checkboxes instead)
     weather_layer = folium.FeatureGroup(name='Weather Stations')
     usgs_layer = folium.FeatureGroup(name='USGS River Gauges')
     weather_layer.add_to(m)
@@ -572,7 +570,7 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
     # Add markers for weather data
     if not combined_df.empty:
         for index, row in combined_df.iterrows():
-            wbgt = row.get("wbgt_f")
+            wbgt_val = row.get("wbgt_f")
             temp = row.get("Temperature (°F)")
             dew = row.get("Dewpoint (°F)")
             site = row.get("name") if "name" in row else row.get("Site")
@@ -586,23 +584,24 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
 
             # Determine color and value based on selected measurement
             if selected_measurement == "WBGT":
-                value = wbgt
-                color = wbgt_color(wbgt)
+                value = wbgt_val
+                color = wbgt_color(wbgt_val)
                 value_label = "WBGT"
                 value_unit = "°F"
             elif selected_measurement == "Temperature":
                 value = temp
-                color = wbgt_color(wbgt) if pd.notna(wbgt) else "#808080"  # Still use WBGT for color coding
+                # Still use WBGT for color coding if available
+                color = wbgt_color(wbgt_val) if pd.notna(wbgt_val) else "#808080"
                 value_label = "Temperature"
                 value_unit = "°F"
             elif selected_measurement == "Dewpoint":
                 value = dew
-                color = wbgt_color(wbgt) if pd.notna(wbgt) else "#808080"  # Still use WBGT for color coding
+                color = wbgt_color(wbgt_val) if pd.notna(wbgt_val) else "#808080"
                 value_label = "Dewpoint"
                 value_unit = "°F"
             else:
-                value = wbgt
-                color = wbgt_color(wbgt)
+                value = wbgt_val
+                color = wbgt_color(wbgt_val)
                 value_label = "WBGT"
                 value_unit = "°F"
 
@@ -612,13 +611,17 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
             <div style="font-family:system-ui;min-width:220px">
               <h4 style="margin:0 0 6px 0">{site} ({source})</h4>
               <div><b>Observed:</b> {obs_time if pd.notna(obs_time) else 'N/A'}</div>
-              <div><b>WBGT:</b> {f'{wbgt:.1f} °F' if pd.notna(wbgt) else 'N/A'}</div>
+              <div><b>WBGT:</b> {f'{wbgt_val:.1f} °F' if pd.notna(wbgt_val) else 'N/A'}</div>
               <div><b>Temperature:</b> {f'{temp:.1f} °F' if pd.notna(temp) else 'N/A'}</div>
               <div><b>Dewpoint:</b> {f'{dew:.1f} °F' if pd.notna(dew) else 'N/A'}</div>
             </div>
             """
 
-            tooltip_text = f"{site}: {value_label} {value:.1f}{value_unit}" if pd.notna(value) else f"{site}: {value_label} N/A"
+            tooltip_text = (
+                f"{site}: {value_label} {value:.1f}{value_unit}"
+                if pd.notna(value)
+                else f"{site}: {value_label} N/A"
+            )
             
             marker = folium.CircleMarker(
                 location=[latitude, longitude],
@@ -663,8 +666,6 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
                 icon=folium.Icon(color='blue', icon='tint', prefix='fa')
             ).add_to(usgs_layer)
 
-    # No layer control - using sidebar checkboxes instead
-
     # Add legend
     legend_html = f"""
     <div style="
@@ -689,32 +690,27 @@ def create_map(combined_df, ky_sites_df, selected_measurement):
 def upload_map_to_github(map_filename):
     """Upload map HTML file to GitHub repository"""
     try:
-        # Read the map file
         if not os.path.exists(map_filename):
             return {"success": False, "error": f"Map file {map_filename} not found"}
         
         with open(map_filename, 'r', encoding='utf-8') as f:
             map_content = f.read()
         
-        # GitHub repository details
         repo_owner = "dsoc-people"
         repo_name = "DSOCWBGT2"
-        file_path = "Image storage/wbgt_map.html"  # Path in GitHub repo
+        file_path = "Image storage/wbgt_map.html"
         
-        # Try to get token from Streamlit secrets first, then environment variable
         try:
             github_token = st.secrets.get("GITHUB_TOKEN", None)
         except:
             github_token = None
         
         if not github_token:
-            github_token = os.getenv("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")
+            github_token = os.getenv("GITHUB_TOKEN")
         
         if not github_token:
-            # Try to use git command as fallback
             import subprocess
             try:
-                # Check if we're in a git repo
                 result = subprocess.run(
                     ["git", "remote", "get-url", "origin"],
                     capture_output=True,
@@ -722,7 +718,6 @@ def upload_map_to_github(map_filename):
                     timeout=5
                 )
                 if result.returncode == 0:
-                    # Use git to commit and push
                     subprocess.run(["git", "add", map_filename], check=False, timeout=5)
                     commit_result = subprocess.run(
                         ["git", "commit", "-m", "Update WBGT map", map_filename],
@@ -748,23 +743,19 @@ def upload_map_to_github(map_filename):
                     "error": f"GITHUB_TOKEN not set and git push failed: {str(git_error)}"
                 }
         
-        # Use GitHub API
         import requests
         
-        # Get the file SHA if it exists
         url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/contents/{file_path}"
         headers = {
             "Authorization": f"token {github_token}",
             "Accept": "application/vnd.github.v3+json"
         }
         
-        # Check if file exists
         response = requests.get(url, headers=headers, timeout=10)
         sha = None
         if response.status_code == 200:
             sha = response.json().get("sha")
         elif response.status_code == 404:
-            # File doesn't exist yet, that's okay
             pass
         else:
             return {
@@ -772,10 +763,8 @@ def upload_map_to_github(map_filename):
                 "error": f"GitHub API error checking file: {response.status_code} - {response.text}"
             }
         
-        # Encode content
         content_encoded = base64.b64encode(map_content.encode('utf-8')).decode('utf-8')
         
-        # Prepare data
         data = {
             "message": "Update WBGT map",
             "content": content_encoded,
@@ -784,7 +773,6 @@ def upload_map_to_github(map_filename):
         if sha:
             data["sha"] = sha
         
-        # Upload file
         response = requests.put(url, json=data, headers=headers, timeout=10)
         
         if response.status_code in [200, 201]:
@@ -815,15 +803,21 @@ def main():
         st.header("Data Sources")
         show_whitesquirrel = st.checkbox("White Squirrel Weather", value=True)
         show_mesonet = st.checkbox("Mesonet", value=True)
-        show_usgs = st.checkbox("USGS River Gauges", value=True)
-        
+        show_usgs = st.checkbox("USGS River Gauges", value=False)
+
+        upload_to_github = st.checkbox("Upload latest map to GitHub", value=False)
         
         st.info("🔄 Auto-refreshing every 5 minutes")
-        # Always run auto-refresh every 5 minutes (300 seconds = 300000 milliseconds)
+        # Auto-refresh every 5 minutes; let cache TTLs control refetch
         count = st_autorefresh(interval=300000, limit=None, key="weather_refresh")
-        if count > 0:
-            st.cache_data.clear()
-            st.rerun()
+
+    # Measurement selector
+    selected_measurement = st.radio(
+        "Value to display on the map",
+        ["WBGT", "Temperature", "Dewpoint"],
+        index=0,
+        horizontal=True,
+    )
 
     # Fetch data
     with st.spinner("Fetching weather data..."):
@@ -837,7 +831,6 @@ def main():
                 "Site": "name",
                 "Observation Time": "observation_time"
             })
-            # Ensure source is explicitly set
             df_whitesquirrel['source'] = 'White Squirrel Weather'
         else:
             df_whitesquirrel = pd.DataFrame()
@@ -845,18 +838,13 @@ def main():
         # Fetch Mesonet data
         if show_mesonet:
             station_coords, station_abbreviations = get_station_coordinates()
+            year = datetime.utcnow().year
             df_mesonet = fetch_mesonet_data(year, station_coords, station_abbreviations)
-            # Source is already set in process_mesonet_station function
-            # Verify Temperature and Dewpoint columns exist
             if not df_mesonet.empty:
                 if "Temperature (°F)" not in df_mesonet.columns:
                     st.error(f"❌ Mesonet dataframe missing 'Temperature (°F)' column! Columns: {list(df_mesonet.columns)}")
                 if "Dewpoint (°F)" not in df_mesonet.columns:
                     st.error(f"❌ Mesonet dataframe missing 'Dewpoint (°F)' column! Columns: {list(df_mesonet.columns)}")
-                # Debug: Show first row structure
-                if len(df_mesonet) > 0:
-                    first_row = df_mesonet.iloc[0].to_dict()
-                    st.write("🔍 First Mesonet row keys:", list(first_row.keys()))
         else:
             df_mesonet = pd.DataFrame()
 
@@ -874,7 +862,6 @@ def main():
         dfs_to_combine.append(df_mesonet.copy())
     
     if len(dfs_to_combine) > 1:
-        # Align columns
         all_columns = list(set([col for df in dfs_to_combine for col in df.columns.tolist()]))
         aligned_dfs = []
         for df in dfs_to_combine:
@@ -890,29 +877,16 @@ def main():
     else:
         combined_df = pd.DataFrame()
     
-    # Filter USGS data based on checkbox
-    if not show_usgs:
-        ky_sites_df = pd.DataFrame()
-
     # Display data summary
     col1, col2, col3 = st.columns(3)
     with col1:
-        if not df_whitesquirrel.empty:
-            st.metric("White Squirrel Weather Stations", len(df_whitesquirrel))
-        else:
-            st.metric("White Squirrel Weather Stations", 0)
+        st.metric("White Squirrel Weather Stations", len(df_whitesquirrel) if not df_whitesquirrel.empty else 0)
     with col2:
-        if not df_mesonet.empty:
-            st.metric("Mesonet Stations", len(df_mesonet))
-        else:
-            st.metric("Mesonet Stations", 0)
+        st.metric("Mesonet Stations", len(df_mesonet) if not df_mesonet.empty else 0)
     with col3:
-        if not ky_sites_df.empty:
-            st.metric("USGS River Gauges", ky_sites_df['Site ID'].nunique())
-        else:
-            st.metric("USGS River Gauges", 0)
+        st.metric("USGS River Gauges", ky_sites_df['Site ID'].nunique() if not ky_sites_df.empty else 0)
 
-    # Display data tables
+    # Data tables
     if st.checkbox("Show Data Tables"):
         tab1, tab2, tab3 = st.tabs(["White Squirrel Weather", "Mesonet", "USGS"])
         
@@ -934,6 +908,10 @@ def main():
             else:
                 st.info("No USGS data available.")
 
+    # Optional quick debug to verify temps
+    if not combined_df.empty and st.checkbox("Show Temperature Debug Sample"):
+        st.write(combined_df[["name", "wbgt_f", "Temperature (°F)", "Dewpoint (°F)"]].head(10))
+
     # Create and display map
     if not combined_df.empty or not ky_sites_df.empty:
         st.subheader("Interactive Map")
@@ -943,43 +921,43 @@ def main():
         map_filename = "wbgt_map.html"
         m.save(map_filename)
         
-        # Upload to GitHub
-        upload_status = upload_map_to_github(map_filename)
-        if upload_status.get("success"):
-            st.success(f"✅ Map uploaded to GitHub: {upload_status.get('url', '')}")
-        else:
-            st.warning(f"⚠️ Could not upload map to GitHub: {upload_status.get('error', 'Unknown error')}")
-            with st.expander("Setup Instructions"):
-                st.markdown("""
-                **To enable GitHub upload:**
-                
-                1. **Create a GitHub Personal Access Token:**
-                   - Go to https://github.com/settings/tokens
-                   - Click "Generate new token (classic)"
-                   - Give it a name like "WBGT Map Upload"
-                   - Select scope: `repo` (full control of private repositories)
-                   - Click "Generate token"
-                   - Copy the token immediately (you won't see it again!)
-                
-                2. **Set the token as an environment variable:**
-                   ```bash
-                   export GITHUB_TOKEN=
-                   ```
-                
-                3. **Or set it in your Streamlit secrets:**
-                   Create `.streamlit/secrets.toml`:
-                   ```toml
-                   GITHUB_TOKEN = ""
-                   ```
-                
-                4. **Restart your Streamlit app**
-                """)
+        # Upload to GitHub only if requested
+        if upload_to_github:
+            upload_status = upload_map_to_github(map_filename)
+            if upload_status.get("success"):
+                st.success(f"✅ Map uploaded to GitHub: {upload_status.get('url', '')}")
+            else:
+                st.warning(f"⚠️ Could not upload map to GitHub: {upload_status.get('error', 'Unknown error')}")
+                with st.expander("Setup Instructions"):
+                    st.markdown("""
+                    **To enable GitHub upload:**
+                    
+                    1. **Create a GitHub Personal Access Token:**
+                       - Go to https://github.com/settings/tokens
+                       - Click "Generate new token (classic)"
+                       - Give it a name like "WBGT Map Upload"
+                       - Select scope: `repo`
+                       - Click "Generate token"
+                       - Copy the token immediately.
+                    
+                    2. **Set the token as an environment variable:**
+                       ```bash
+                       export GITHUB_TOKEN="YOUR_TOKEN_HERE"
+                       ```
+                    
+                    3. **Or set it in your Streamlit secrets (`.streamlit/secrets.toml`):**
+                       ```toml
+                       GITHUB_TOKEN = "YOUR_TOKEN_HERE"
+                       ```
+                    
+                    4. **Restart your Streamlit app**
+                    """)
         
         st_folium(m, width=None, height=600)
     else:
         st.warning("No data available to display on map. Please enable at least one data source.")
 
-    # Debug info (can be removed in production)
+    # Debug info (optional)
     if st.checkbox("Show Debug Info"):
         st.subheader("Source Verification")
         if not combined_df.empty:
@@ -998,15 +976,6 @@ def main():
             st.write(df_mesonet.shape)
             st.write("**Sample Mesonet rows:**")
             st.dataframe(df_mesonet.head(10))
-            st.write("**Checking for Temperature and Dewpoint columns:**")
-            st.write(f"Has 'Temperature (°F)': {'Temperature (°F)' in df_mesonet.columns}")
-            st.write(f"Has 'Dewpoint (°F)': {'Dewpoint (°F)' in df_mesonet.columns}")
-            if 'Temperature (°F)' in df_mesonet.columns:
-                st.write("**Temperature values:**")
-                st.write(df_mesonet['Temperature (°F)'].head(10))
-            if 'Dewpoint (°F)' in df_mesonet.columns:
-                st.write("**Dewpoint values:**")
-                st.write(df_mesonet['Dewpoint (°F)'].head(10))
         else:
             st.write("Mesonet dataframe is empty")
         
