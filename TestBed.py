@@ -466,4 +466,4 @@ if show_usgs and not usgs_df.empty:
 # -------------------------------------------------------------
 # DISPLAY MAP
 # -------------------------------------------------------------
-st_folium(m, width=1000, height=650)"
+st_folium(m, width=1000, height=650)
