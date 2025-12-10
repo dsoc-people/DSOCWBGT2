@@ -179,7 +179,7 @@ urls = {
 # STREAMLIT SETUP
 # -------------------------------------------------------------
 st.set_page_config(page_title="Kentucky WBGT Monitor", layout="wide")
-st.title("DSOC Wet Bulb Globe Temperature Monitoring")
+st.title("DSOC Multi-source Heat Stress Dashboard")
 
 sig = inspect.signature(st_autorefresh)
 if "rerun" in sig.parameters:
