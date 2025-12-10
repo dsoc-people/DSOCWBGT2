@@ -1,4 +1,4 @@
-remove the Varabile seletor and make it just a WBGT APP "# app.py
+# app.py
 # -*- coding: utf-8 -*-
 # Kentucky WBGT + WeatherSTEM + Mesonet + USGS (no county view, source toggles)
 
